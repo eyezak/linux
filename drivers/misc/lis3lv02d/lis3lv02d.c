@@ -42,6 +42,7 @@
 #include "lis3lv02d.h"
 
 #define DRIVER_NAME     "lis3lv02d"
+#define PLATFORM_DEV_NAME(lis3)	"lis3lv02d. ## lis3->miscdev->minor ## "
 
 /* joystick device poll interval in milliseconds */
 #define MDPS_POLL_INTERVAL 50
@@ -830,7 +831,8 @@ static struct attribute_group lis3lv02d_attribute_group = {
 
 static int lis3lv02d_add_fs(struct lis3lv02d *lis3)
 {
-	lis3->pdev = platform_device_register_simple(DRIVER_NAME, -1, NULL, 0);
+	lis3->pdev = platform_device_register_data(lis3->miscdev.this_device, 
+						DRIVER_NAME, lis3->pdata->id, NULL, 0);
 	if (IS_ERR(lis3->pdev))
 		return PTR_ERR(lis3->pdev);
 
@@ -918,9 +920,10 @@ static void lis3lv02d_8b_configure(struct lis3lv02d *lis3,
  */
 int lis3lv02d_init_device(struct lis3lv02d *lis3)
 {
-	int err;
+	int err = 0;
 	irq_handler_t thread_fn;
 	int irq_flags = 0;
+	const char * miscname;
 
 	lis3->whoami = lis3lv02d_read_8(lis3, WHO_AM_I);
 
@@ -974,7 +977,7 @@ int lis3lv02d_init_device(struct lis3lv02d *lis3)
 
 	lis3lv02d_add_fs(lis3);
 	err = lis3lv02d_poweron(lis3);
-	if (err) {
+	if (err < 0) {
 		lis3lv02d_remove_fs(lis3);
 		return err;
 	}
@@ -984,8 +987,9 @@ int lis3lv02d_init_device(struct lis3lv02d *lis3)
 		pm_runtime_enable(lis3->pm_dev);
 	}
 
-	if (lis3lv02d_joystick_enable(lis3))
-		pr_err("joystick initialization failed\n");
+	err = lis3lv02d_joystick_enable(lis3);
+	if (err < 0)
+		pr_err("joystick initialization failed (%d)\n", err);
 
 	/* passing in platform specific data is purely optional and only
 	 * used by the SPI transport layer at the moment */
@@ -1039,13 +1043,20 @@ int lis3lv02d_init_device(struct lis3lv02d *lis3)
 	}
 
 	lis3->miscdev.minor	= MISC_DYNAMIC_MINOR;
-	lis3->miscdev.name	= "freefall";
+	if (lis3->pdata->id != -1)
+		lis3->miscdev.name = miscname = kasprintf(GFP_KERNEL, "freefall.%d", lis3->pdata->id);
+	else
+		lis3->miscdev.name = "frefall";
 	lis3->miscdev.fops	= &lis3lv02d_misc_fops;
 
-	if (misc_register(&lis3->miscdev))
-		pr_err("misc_register failed\n");
+	err = misc_register(&lis3->miscdev);
+	if (err < 0)
+		pr_err("misc_register failed (%d)\n", err);
+	
+/*	if (lis3->pdata->id != -1)
+		kfree(miscname);*/
 out:
-	return 0;
+	return (err < 0) ? err : 0;
 }
 EXPORT_SYMBOL_GPL(lis3lv02d_init_device);
 

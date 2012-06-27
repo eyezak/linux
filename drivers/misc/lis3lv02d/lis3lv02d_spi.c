@@ -61,6 +61,7 @@ static union axis_conversion lis3lv02d_axis_normal =
 static int __devinit lis302dl_spi_probe(struct spi_device *spi)
 {
 	int ret;
+	struct lis3lv02d * lis3;
 
 	spi->bits_per_word = 8;
 	spi->mode = SPI_MODE_0;
@@ -68,16 +69,21 @@ static int __devinit lis302dl_spi_probe(struct spi_device *spi)
 	if (ret < 0)
 		return ret;
 
-	lis3_dev.bus_priv	= spi;
-	lis3_dev.init		= lis3_spi_init;
-	lis3_dev.read		= lis3_spi_read;
-	lis3_dev.write		= lis3_spi_write;
-	lis3_dev.irq		= spi->irq;
-	lis3_dev.ac		= lis3lv02d_axis_normal;
-	lis3_dev.pdata		= spi->dev.platform_data;
-	spi_set_drvdata(spi, &lis3_dev);
+	lis3 = kzalloc(sizeof(struct lis3lv02d), GFP_KERNEL);
+	
+	lis3->ac		= lis3_dev.ac;
+	lis3->misc_wait = (wait_queue_head_t) __WAIT_QUEUE_HEAD_INITIALIZER(lis3->misc_wait);
+	lis3->bus_priv	= spi;
+	lis3->init		= lis3_spi_init;
+	lis3->read		= lis3_spi_read;
+	lis3->write		= lis3_spi_write;
+	lis3->irq		= spi->irq;
+	lis3->ac		= lis3lv02d_axis_normal;
+	lis3->pdata		= spi->dev.platform_data;
+	lis3->miscdev.parent = &spi->dev;
+	spi_set_drvdata(spi, lis3);
 
-	return lis3lv02d_init_device(&lis3_dev);
+	return lis3lv02d_init_device(lis3);
 }
 
 static int __devexit lis302dl_spi_remove(struct spi_device *spi)
@@ -86,7 +92,7 @@ static int __devexit lis302dl_spi_remove(struct spi_device *spi)
 	lis3lv02d_joystick_disable(lis3);
 	lis3lv02d_poweroff(lis3);
 
-	return lis3lv02d_remove_fs(&lis3_dev);
+	return lis3lv02d_remove_fs(lis3);
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -96,7 +102,7 @@ static int lis3lv02d_spi_suspend(struct device *dev)
 	struct lis3lv02d *lis3 = spi_get_drvdata(spi);
 
 	if (!lis3->pdata || !lis3->pdata->wakeup_flags)
-		lis3lv02d_poweroff(&lis3_dev);
+		lis3lv02d_poweroff(lis3);
 
 	return 0;
 }
