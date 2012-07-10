@@ -478,13 +478,14 @@ comment "S3C2442 Boards"
 
 config MACH_NEO1973_GTA02
 	bool "Openmoko GTA02 / Freerunner phone"
-	select MFD_PCF50633
-	select PCF50633_GPIO
+	select S3C24XX_GPIO_EXTRA64
 	select I2C
 	select POWER_SUPPLY
 	select MACH_NEO1973
 	select S3C2410_PWM
 	select S3C_DEV_USB_HOST
+	select S3C_DEV_NAND
+	select S3C2410_IOTIMING if S3C2440_CPUFREQ
 	help
 	   Say Y here if you are using the Openmoko GTA02 / Freerunner GSM Phone
 
