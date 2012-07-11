@@ -26,9 +26,10 @@
 #include <linux/regmap.h>
 #include <linux/err.h>
 
+#include <linux/mfd/core.h>
 #include <linux/mfd/pcf50633/core.h>
 
-/* Read a block of up to 32 regs  */
+/* Read a block of upto 32 regs  */
 int pcf50633_read_block(struct pcf50633 *pcf, u8 reg,
 					int nr_regs, u8 *data)
 {
@@ -42,11 +43,17 @@ int pcf50633_read_block(struct pcf50633 *pcf, u8 reg,
 }
 EXPORT_SYMBOL_GPL(pcf50633_read_block);
 
-/* Write a block of up to 32 regs  */
+/* Write a block of upto 32 regs  */
 int pcf50633_write_block(struct pcf50633 *pcf , u8 reg,
 					int nr_regs, u8 *data)
 {
-	return regmap_raw_write(pcf->regmap, reg, data, nr_regs);
+	int ret;
+
+	ret = regmap_raw_write(pcf->regmap, reg, data, nr_regs);
+	if (ret != 0)
+		return ret;
+
+	return nr_regs;
 }
 EXPORT_SYMBOL_GPL(pcf50633_write_block);
 
@@ -144,27 +151,6 @@ static struct attribute_group pcf_attr_group = {
 	.attrs	= pcf_sysfs_entries,
 };
 
-static void
-pcf50633_client_dev_register(struct pcf50633 *pcf, const char *name,
-						struct platform_device **pdev)
-{
-	int ret;
-
-	*pdev = platform_device_alloc(name, -1);
-	if (!*pdev) {
-		dev_err(pcf->dev, "Falied to allocate %s\n", name);
-		return;
-	}
-
-	(*pdev)->dev.parent = pcf->dev;
-
-	ret = platform_device_add(*pdev);
-	if (ret) {
-		dev_err(pcf->dev, "Failed to register %s: %d\n", name, ret);
-		platform_device_put(*pdev);
-		*pdev = NULL;
-	}
-}
 
 #ifdef CONFIG_PM_SLEEP
 static int pcf50633_suspend(struct device *dev)
@@ -191,12 +177,90 @@ static struct regmap_config pcf50633_regmap_config = {
 	.val_bits = 8,
 };
 
+#define PCF50633_CELL(_name) \
+	{ \
+		.name = _name, \
+		.id = -1, \
+	} \
+
+#define PCF50633_CELL_RESOURCES(_name, _resources) \
+	{ \
+		.name = _name, \
+		.num_resources = ARRAY_SIZE(_resources), \
+		.resources = _resources, \
+		.id = -1, \
+	} \
+
+#define PCF50633_CELL_ID(_name, _id) \
+	{ \
+		.name = _name, \
+		.id = _id, \
+	} \
+
+#define PCF50633_IRQ_RESOURCE(_id) \
+	{ \
+		.start = PCF50633_IRQ_ ## _id, \
+		.end = PCF50633_IRQ_ ## _id, \
+		.flags = IORESOURCE_IRQ, \
+		.name = #_id, \
+	} \
+
+static struct resource pcf50633_adc_resources[] = {
+	PCF50633_IRQ_RESOURCE(ADCRDY),
+};
+
+static struct resource pcf50633_input_resources[] = {
+	PCF50633_IRQ_RESOURCE(ONKEYR),
+	PCF50633_IRQ_RESOURCE(ONKEYF),
+};
+
+static struct resource pcf50633_rtc_resources[] = {
+	PCF50633_IRQ_RESOURCE(ALARM),
+	PCF50633_IRQ_RESOURCE(SECOND),
+};
+
+static struct resource pcf50633_mbc_resources[] = {
+	PCF50633_IRQ_RESOURCE(ADPINS),
+	PCF50633_IRQ_RESOURCE(ADPREM),
+	PCF50633_IRQ_RESOURCE(USBINS),
+	PCF50633_IRQ_RESOURCE(USBREM),
+	PCF50633_IRQ_RESOURCE(BATFULL),
+	PCF50633_IRQ_RESOURCE(CHGHALT),
+	PCF50633_IRQ_RESOURCE(THLIMON),
+	PCF50633_IRQ_RESOURCE(THLIMOFF),
+	PCF50633_IRQ_RESOURCE(USBLIMON),
+	PCF50633_IRQ_RESOURCE(USBLIMOFF),
+	PCF50633_IRQ_RESOURCE(LOWSYS),
+	PCF50633_IRQ_RESOURCE(LOWBAT),
+};
+
+static struct mfd_cell pcf50633_cells[] = {
+	PCF50633_CELL_RESOURCES("pcf50633-input", pcf50633_input_resources),
+	PCF50633_CELL_RESOURCES("pcf50633-rtc", pcf50633_rtc_resources),
+	PCF50633_CELL_RESOURCES("pcf50633-mbc", pcf50633_mbc_resources),
+	PCF50633_CELL_RESOURCES("pcf50633-adc", pcf50633_adc_resources),
+	PCF50633_CELL("pcf50633-backlight"),
+	PCF50633_CELL("pcf50633-gpio"),
+	PCF50633_CELL_ID("pcf50633-regltr", 0),
+	PCF50633_CELL_ID("pcf50633-regltr", 1),
+	PCF50633_CELL_ID("pcf50633-regltr", 2),
+	PCF50633_CELL_ID("pcf50633-regltr", 3),
+	PCF50633_CELL_ID("pcf50633-regltr", 4),
+	PCF50633_CELL_ID("pcf50633-regltr", 5),
+	PCF50633_CELL_ID("pcf50633-regltr", 6),
+	PCF50633_CELL_ID("pcf50633-regltr", 7),
+	PCF50633_CELL_ID("pcf50633-regltr", 8),
+	PCF50633_CELL_ID("pcf50633-regltr", 9),
+	PCF50633_CELL_ID("pcf50633-regltr", 10),
+};
+
 static int __devinit pcf50633_probe(struct i2c_client *client,
 				const struct i2c_device_id *ids)
 {
 	struct pcf50633 *pcf;
 	struct pcf50633_platform_data *pdata = client->dev.platform_data;
-	int i, ret;
+	struct mfd_cell *bl = &(pcf50633_cells[4]);
+	int ret;
 	int version, variant;
 
 	if (!client->irq) {
@@ -204,7 +268,7 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 		return -ENOENT;
 	}
 
-	pcf = devm_kzalloc(&client->dev, sizeof(*pcf), GFP_KERNEL);
+	pcf = kzalloc(sizeof(*pcf), GFP_KERNEL);
 	if (!pcf)
 		return -ENOMEM;
 
@@ -212,11 +276,12 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 
 	mutex_init(&pcf->lock);
 
-	pcf->regmap = devm_regmap_init_i2c(client, &pcf50633_regmap_config);
+	pcf->regmap = regmap_init_i2c(client, &pcf50633_regmap_config);
 	if (IS_ERR(pcf->regmap)) {
 		ret = PTR_ERR(pcf->regmap);
-		dev_err(pcf->dev, "Failed to allocate register map: %d\n", ret);
-		return ret;
+		dev_err(pcf->dev, "Failed to allocate register map: %d\n",
+			ret);
+		goto err_free;
 	}
 
 	i2c_set_clientdata(client, pcf);
@@ -227,37 +292,25 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 	if (version < 0 || variant < 0) {
 		dev_err(pcf->dev, "Unable to probe pcf50633\n");
 		ret = -ENODEV;
-		return ret;
+		goto err_regmap;
 	}
 
 	dev_info(pcf->dev, "Probed device version %d variant %d\n",
 							version, variant);
 
-	pcf50633_irq_init(pcf, client->irq);
+	ret = pcf50633_irq_init(pcf, client->irq);
+	if (ret)
+		goto err_free;
 
-	/* Create sub devices */
-	pcf50633_client_dev_register(pcf, "pcf50633-input", &pcf->input_pdev);
-	pcf50633_client_dev_register(pcf, "pcf50633-rtc", &pcf->rtc_pdev);
-	pcf50633_client_dev_register(pcf, "pcf50633-mbc", &pcf->mbc_pdev);
-	pcf50633_client_dev_register(pcf, "pcf50633-adc", &pcf->adc_pdev);
-	pcf50633_client_dev_register(pcf, "pcf50633-backlight", &pcf->bl_pdev);
+	bl->platform_data = pdata->backlight_data;
+	bl->pdata_size = sizeof(struct pcf50633_bl_platform_data);
+	
 
-
-	for (i = 0; i < PCF50633_NUM_REGULATORS; i++) {
-		struct platform_device *pdev;
-
-		pdev = platform_device_alloc("pcf50633-regltr", i);
-		if (!pdev) {
-			dev_err(pcf->dev, "Cannot create regulator %d\n", i);
-			continue;
-		}
-
-		pdev->dev.parent = pcf->dev;
-		platform_device_add_data(pdev, &pdata->reg_init_data[i],
-					sizeof(pdata->reg_init_data[i]));
-		pcf->regulator_pdev[i] = pdev;
-
-		platform_device_add(pdev);
+	ret = mfd_add_devices(pcf->dev, 0, pcf50633_cells,
+			ARRAY_SIZE(pcf50633_cells), NULL, pcf->irq_base);
+	if (ret) {
+		dev_err(pcf->dev, "Failed to add mfd cells.\n");
+		goto err_irq_free;
 	}
 
 	ret = sysfs_create_group(&client->dev.kobj, &pcf_attr_group);
@@ -268,24 +321,29 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 		pdata->probe_done(pcf);
 
 	return 0;
+
+err_regmap:
+	regmap_exit(pcf->regmap);
+err_irq_free:
+	pcf50633_irq_free(pcf);
+err_free:
+	kfree(pcf);
+
+	return ret;
 }
 
 static int __devexit pcf50633_remove(struct i2c_client *client)
 {
 	struct pcf50633 *pcf = i2c_get_clientdata(client);
-	int i;
 
 	sysfs_remove_group(&client->dev.kobj, &pcf_attr_group);
+
+	mfd_remove_devices(pcf->dev);
+
 	pcf50633_irq_free(pcf);
 
-	platform_device_unregister(pcf->input_pdev);
-	platform_device_unregister(pcf->rtc_pdev);
-	platform_device_unregister(pcf->mbc_pdev);
-	platform_device_unregister(pcf->adc_pdev);
-	platform_device_unregister(pcf->bl_pdev);
-
-	for (i = 0; i < PCF50633_NUM_REGULATORS; i++)
-		platform_device_unregister(pcf->regulator_pdev[i]);
+	regmap_exit(pcf->regmap);
+	kfree(pcf);
 
 	return 0;
 }

@@ -27,29 +27,11 @@
 #include <linux/mfd/pcf50633/core.h>
 #include <linux/mfd/pcf50633/adc.h>
 
-struct pcf50633_adc_request {
-	int mux;
-	int avg;
-	void (*callback)(struct pcf50633 *, void *, int);
-	void *callback_param;
-};
-
 struct pcf50633_adc_sync_request {
 	int result;
 	struct completion completion;
 };
 
-#define PCF50633_MAX_ADC_FIFO_DEPTH 8
-
-struct pcf50633_adc {
-	struct pcf50633 *pcf;
-
-	/* Private stuff */
-	struct pcf50633_adc_request *queue[PCF50633_MAX_ADC_FIFO_DEPTH];
-	int queue_head;
-	int queue_tail;
-	struct mutex queue_mutex;
-};
 
 static inline struct pcf50633_adc *__to_adc(struct pcf50633 *pcf)
 {
@@ -209,6 +191,8 @@ static int __devinit pcf50633_adc_probe(struct platform_device *pdev)
 
 	adc->pcf = dev_to_pcf50633(pdev->dev.parent);
 	platform_set_drvdata(pdev, adc);
+	adc->async_read = pcf50633_adc_async_read;
+	adc->sync_read = pcf50633_adc_sync_read;
 
 	pcf50633_register_irq(adc->pcf, PCF50633_IRQ_ADCRDY,
 					pcf50633_adc_irq, adc);

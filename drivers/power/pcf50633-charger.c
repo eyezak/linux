@@ -26,17 +26,16 @@
 
 #include <linux/mfd/pcf50633/core.h>
 #include <linux/mfd/pcf50633/mbc.h>
+#include <linux/mfd/pcf50633/adc.h>
+#include <linux/mfd/pcf50633/gpio.h>
 
-struct pcf50633_mbc {
-	struct pcf50633 *pcf;
 
-	int adapter_online;
-	int usb_online;
-
-	struct power_supply usb;
-	struct power_supply adapter;
-	struct power_supply ac;
-};
+#define REG_SELECTED_MSG(reg, match) \
+	((reg == match) ? "[%s] " : "%s ")
+#define REG_BIT_MSG(reg, match) \
+	((reg & match) ? "%s " : "")
+#define REG_BITS_MSG(reg, mask, match) \
+	(((reg & mask) == match) ? "%s " : "")
 
 int pcf50633_mbc_usb_curlim_set(struct pcf50633 *pcf, int ma)
 {
@@ -47,27 +46,32 @@ int pcf50633_mbc_usb_curlim_set(struct pcf50633 *pcf, int ma)
 	u8 mbcs2, chgmod;
 	unsigned int mbcc5;
 
+	if (ma > mbc->pcf->pdata->charger_reference_current_ma)
+		ma = mbc->pcf->pdata->charger_reference_current_ma;
+	else if (ma < 0)
+		ma = 0;
+
 	if (ma >= 1000) {
 		bits = PCF50633_MBCC7_USB_1000mA;
-		ma = 1000;
+//		ma = 1000;
 	} else if (ma >= 500) {
 		bits = PCF50633_MBCC7_USB_500mA;
-		ma = 500;
+//		ma = 500;
 	} else if (ma >= 100) {
 		bits = PCF50633_MBCC7_USB_100mA;
-		ma = 100;
+//		ma = 100;
 	} else {
 		bits = PCF50633_MBCC7_USB_SUSPEND;
 		charging_start = 0;
-		ma = 0;
+//		ma = 0;
 	}
 
 	ret = pcf50633_reg_set_bit_mask(pcf, PCF50633_REG_MBCC7,
 					PCF50633_MBCC7_USB_MASK, bits);
 	if (ret)
-		dev_err(pcf->dev, "error setting usb curlim to %d mA\n", ma);
+		dev_err(&pcf->mbc_pdev->dev, "error setting usb curlim to %d mA\n", ma);
 	else
-		dev_info(pcf->dev, "usb curlim to %d mA\n", ma);
+		dev_info(&pcf->mbc_pdev->dev, "usb curlim to %d mA\n", ma);
 
 	/*
 	 * We limit the charging current to be the USB current limit.
@@ -81,7 +85,7 @@ int pcf50633_mbc_usb_curlim_set(struct pcf50633 *pcf, int ma)
 	 */
 
 	if (mbc->pcf->pdata->charger_reference_current_ma) {
-		mbcc5 = (ma << 8) / mbc->pcf->pdata->charger_reference_current_ma;
+		mbcc5 = (ma * 255) / mbc->pcf->pdata->charger_reference_current_ma;
 		if (mbcc5 > 255)
 			mbcc5 = 255;
 		pcf50633_reg_write(mbc->pcf, PCF50633_REG_MBCC5, mbcc5);
@@ -152,105 +156,163 @@ int pcf50633_mbc_get_usb_online_status(struct pcf50633 *pcf)
 }
 EXPORT_SYMBOL_GPL(pcf50633_mbc_get_usb_online_status);
 
-static ssize_t
-show_chgmode(struct device *dev, struct device_attribute *attr, char *buf)
+
+static ssize_t _show_chglim(struct device *dev,
+                            struct device_attribute *attr,
+                            char *buf, unsigned int reg)
 {
 	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
-
-	u8 mbcs2 = pcf50633_reg_read(mbc->pcf, PCF50633_REG_MBCS2);
-	u8 chgmod = (mbcs2 & PCF50633_MBCS2_MBC_MASK);
-
-	return sprintf(buf, "%d\n", chgmod);
-}
-static DEVICE_ATTR(chgmode, S_IRUGO, show_chgmode, NULL);
-
-static ssize_t
-show_usblim(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
-	u8 usblim = pcf50633_reg_read(mbc->pcf, PCF50633_REG_MBCC7) &
-						PCF50633_MBCC7_USB_MASK;
+	u8 mbcreg = pcf50633_reg_read(mbc->pcf, reg);
 	unsigned int ma;
 
-	if (usblim == PCF50633_MBCC7_USB_1000mA)
-		ma = 1000;
-	else if (usblim == PCF50633_MBCC7_USB_500mA)
-		ma = 500;
-	else if (usblim == PCF50633_MBCC7_USB_100mA)
-		ma = 100;
-	else
-		ma = 0;
+	if (!mbc->pcf->pdata->charger_reference_current_ma)
+		return -ENODEV;
+
+	ma = (mbc->pcf->pdata->charger_reference_current_ma * mbcreg) / 255;
 
 	return sprintf(buf, "%u\n", ma);
 }
 
-static ssize_t set_usblim(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t _set_chglim(struct device *dev,
+                           struct device_attribute *attr,
+                           const char *buf, size_t count,
+                           unsigned int reg)
 {
 	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
 	unsigned long ma;
+	unsigned int mbcreg;
 	int ret;
+
+	if (!mbc->pcf->pdata->charger_reference_current_ma)
+		return -ENODEV;
 
 	ret = strict_strtoul(buf, 10, &ma);
 	if (ret)
 		return -EINVAL;
+
+	mbcreg = (ma * 255) / mbc->pcf->pdata->charger_reference_current_ma;
+	if (mbcreg > 255)
+		mbcreg = 255;
+	pcf50633_reg_write(mbc->pcf, reg, mbcreg);
+
+	return count;
+}
+
+static ssize_t show_status(struct device *dev,
+                           struct device_attribute *attr, char *buf)
+{
+	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
+	char * bufhead = buf;
+	u16 mbcc;
+
+	mbcc = pcf50633_reg_read(mbc->pcf, PCF50633_REG_MBCS1) |
+	         (pcf50633_reg_read(mbc->pcf, PCF50633_REG_MBCS2) << 8);
+	
+	buf += sprintf(buf, REG_BIT_MSG(mbcc, 0x01), "usbpres");
+	buf += sprintf(buf, REG_BIT_MSG(mbcc, 0x02), "usbok");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0x30, 0x0), "tbat_ok");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0x30, 0x1), "tbat_above");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0x30, 0x2), "tbat_below");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0x30, 0x3), "tbat_undef");
+	buf += sprintf(buf, REG_BIT_MSG(mbcc, 0x40), "prewdtexp");
+	buf += sprintf(buf, REG_BIT_MSG(mbcc, 0x50), "wdtexp");
+	
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0x0), "play");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0x1), "prechg");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0x2), "prechg_wait");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0x3), "fastchg");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0x4), "fastchg_wait");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0x5), "suspend");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0xA), "bat_full");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0xF00, 0xB), "halt");
+
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0x3000, 0x0), "no_charger");
+	buf += sprintf(buf, REG_BITS_MSG(mbcc, 0x3000, 0x1), "usb_charger");
+	buf += sprintf(buf, REG_BIT_MSG(mbcc, 0x4000), "chg_res_auto");
+
+	*(buf-1) = '\n';
+	return (buf - bufhead);
+}
+static DEVICE_ATTR(status, S_IRUGO , show_status, NULL);
+
+static ssize_t show_chgmode(struct device *dev,
+                           struct device_attribute *attr, char *buf)
+{
+	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
+	char * bufhead = buf;
+	u8 mbcreg;
+
+	mbcreg = pcf50633_reg_read(mbc->pcf, PCF50633_REG_MBCC7);	
+	mbcreg = (mbcreg & PCF50633_MBCC7_USB_MASK);
+	
+	buf += sprintf(buf, REG_SELECTED_MSG(mbcreg, 0x00), "100mA");
+	buf += sprintf(buf, REG_SELECTED_MSG(mbcreg, 0x01), "500mA");
+	buf += sprintf(buf, REG_SELECTED_MSG(mbcreg, 0x02), "1000mA");
+	buf += sprintf(buf, REG_SELECTED_MSG(mbcreg, 0x03), "off");
+
+	*(buf-1) = '\n';
+	return (buf - bufhead);
+}
+
+static ssize_t set_chgmode(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
+	unsigned long ma;
+	
+	if (strict_strtoul(buf, 10, &ma)) {
+		if (strcmp(buf, "off") == 0 || strcmp(buf, "off\n") == 0)
+			ma = 0;
+		else
+			return -EINVAL;
+	}
+	if (ma!=1000 && ma != 500 && ma != 100 && ma != 0)
+		return -EINVAL;
+
+	dev_info(dev, "set_chgmode: %lu\n", ma);
 
 	pcf50633_mbc_usb_curlim_set(mbc->pcf, ma);
 
 	return count;
 }
 
-static DEVICE_ATTR(usb_curlim, S_IRUGO | S_IWUSR, show_usblim, set_usblim);
+static DEVICE_ATTR(charge_mode, S_IRUGO | S_IWUSR, show_chgmode, set_chgmode);
 
-static ssize_t
-show_chglim(struct device *dev, struct device_attribute *attr, char *buf)
+/* Fast-Charge Current Limit */
+static ssize_t show_fastchglim(struct device *dev,
+                            struct device_attribute *attr,
+                            char *buf)
 {
-	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
-	u8 mbcc5 = pcf50633_reg_read(mbc->pcf, PCF50633_REG_MBCC5);
-	unsigned int ma;
-
-	if (!mbc->pcf->pdata->charger_reference_current_ma)
-		return -ENODEV;
-
-	ma = (mbc->pcf->pdata->charger_reference_current_ma *  mbcc5) >> 8;
-
-	return sprintf(buf, "%u\n", ma);
+	return _show_chglim(dev, attr, buf, PCF50633_REG_MBCC5);
 }
-
-static ssize_t set_chglim(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t set_fastchglim(struct device *dev,
+                           struct device_attribute *attr,
+                           const char *buf, size_t count)
 {
-	struct pcf50633_mbc *mbc = dev_get_drvdata(dev);
-	unsigned long ma;
-	unsigned int mbcc5;
-	int ret;
-
-	if (!mbc->pcf->pdata->charger_reference_current_ma)
-		return -ENODEV;
-
-	ret = strict_strtoul(buf, 10, &ma);
-	if (ret)
-		return -EINVAL;
-
-	mbcc5 = (ma << 8) / mbc->pcf->pdata->charger_reference_current_ma;
-	if (mbcc5 > 255)
-		mbcc5 = 255;
-	pcf50633_reg_write(mbc->pcf, PCF50633_REG_MBCC5, mbcc5);
-
-	return count;
+	return _set_chglim(dev, attr, buf, count, PCF50633_REG_MBCC5);
 }
+static DEVICE_ATTR(fastchg_curlim, S_IRUGO | S_IWUSR, show_fastchglim, set_fastchglim);
 
-/*
- * This attribute allows to change MBC charging limit on the fly
- * independently of usb current limit. It also gets set automatically every
- * time usb current limit is changed.
- */
-static DEVICE_ATTR(chg_curlim, S_IRUGO | S_IWUSR, show_chglim, set_chglim);
+/* Pre-Charge Current Limit */
+static ssize_t show_prechglim(struct device *dev,
+                            struct device_attribute *attr,
+                            char *buf)
+{
+	return _show_chglim(dev, attr, buf, PCF50633_REG_MBCC3);
+}
+static ssize_t set_prechglim(struct device *dev,
+                           struct device_attribute *attr,
+                           const char *buf, size_t count)
+{
+	return _set_chglim(dev, attr, buf, count, PCF50633_REG_MBCC3);
+}
+static DEVICE_ATTR(prechg_curlim, S_IRUGO | S_IWUSR, show_prechglim, set_prechglim);
 
 static struct attribute *pcf50633_mbc_sysfs_entries[] = {
-	&dev_attr_chgmode.attr,
-	&dev_attr_usb_curlim.attr,
-	&dev_attr_chg_curlim.attr,
+	&dev_attr_status.attr,
+	&dev_attr_charge_mode.attr,
+	&dev_attr_fastchg_curlim.attr,
+	&dev_attr_prechg_curlim.attr,
 	NULL,
 };
 
@@ -282,8 +344,13 @@ pcf50633_mbc_irq_handler(int irq, void *data)
 	power_supply_changed(&mbc->usb);
 	power_supply_changed(&mbc->adapter);
 
-	if (mbc->pcf->pdata->mbc_event_callback)
-		mbc->pcf->pdata->mbc_event_callback(mbc->pcf, irq);
+	if (irq == PCF50633_IRQ_USBINS) {
+		schedule_delayed_work(&mbc->work,
+		                      mbc->pcf->pdata->charger_timeout);
+	} else if  (irq == PCF50633_IRQ_USBREM) {
+		cancel_delayed_work_sync(&mbc->work);
+		mbc->usb_curlim = 0;
+	}
 }
 
 static int adapter_get_property(struct power_supply *psy,
@@ -347,6 +414,65 @@ static int ac_get_property(struct power_supply *psy,
 	return ret;
 }
 
+static void pcf50633_mbc_curlim_from_adc(struct pcf50633 *pcf, 
+                                         void *unused, int res)
+{
+	int  ma;
+	dev_info(&pcf->mbc_pdev->dev, "curlim: adc returned %d\n", res);
+
+	/* Interpret charger type */
+	if (res < ((ADC_NOM_CHG_DETECT_USB + ADC_NOM_CHG_DETECT_1A) / 2)) {
+		/*
+		 * Sanity - stop GPO driving out now that we have a 1A charger
+		 * GPO controls USB Host power generation on GTA02
+		 */
+		pcf50633_gpio_set(pcf, PCF50633_GPO, 0);
+		
+		ma = pcf->pdata->charger_reference_current_ma;
+	} else
+		/* If the PCF50633 ADC is disabled we fallback to a
+		 * 100mA limit for safety. */
+		ma = 100;
+
+	pcf50633_mbc_usb_curlim_set(pcf, ma);
+}
+
+static void pcf50633_mbc_curlim_worker(struct work_struct *work)
+{
+	struct delayed_work * dwork;
+	struct pcf50633_mbc * mbc;
+	
+	dwork = to_delayed_work(work);
+	mbc = container_of(dwork, struct pcf50633_mbc, work);
+
+	if (mbc->usb_curlim) {
+		pcf50633_mbc_usb_curlim_set(mbc->pcf, mbc->usb_curlim);
+		return;
+	}
+
+	if (mbc->pcf->adc_pdev) {
+		pcf50633_adc_async_read(mbc->pcf,
+					PCF50633_ADCC1_MUX_ADCIN1,
+					PCF50633_ADCC1_AVERAGE_16,
+					pcf50633_mbc_curlim_from_adc,
+					NULL);
+	} else {
+		/* If the PCF50633 ADC is disabled we fallback to a
+		 * 100mA limit for safety. */
+		pcf50633_mbc_usb_curlim_set(mbc->pcf, 100);
+	}
+}
+
+static void pcf50633_mbc_vbus_draw(struct pcf50633 *pcf, int ma)
+{
+	struct pcf50633_mbc *mbc  = platform_get_drvdata(pcf->mbc_pdev);
+
+	dev_info(&pcf->mbc_pdev->dev, "vbus draw %d mA\n", ma);
+	mbc->usb_curlim = ma;
+	schedule_delayed_work(&mbc->work, mbc->pcf->pdata->charger_timeout);
+	return;
+}
+
 static enum power_supply_property power_props[] = {
 	POWER_SUPPLY_PROP_ONLINE,
 };
@@ -379,6 +505,10 @@ static int __devinit pcf50633_mbc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, mbc);
 	mbc->pcf = dev_to_pcf50633(pdev->dev.parent);
+	mbc->get_status = pcf50633_mbc_get_status;
+	mbc->usb_curlim_set = pcf50633_mbc_usb_curlim_set;
+	mbc->vbus_draw = pcf50633_mbc_vbus_draw;
+	INIT_DELAYED_WORK(&mbc->work, pcf50633_mbc_curlim_worker);
 
 	/* Set up IRQ handlers */
 	for (i = 0; i < ARRAY_SIZE(mbc_irq_handlers); i++)
@@ -412,14 +542,14 @@ static int __devinit pcf50633_mbc_probe(struct platform_device *pdev)
 
 	ret = power_supply_register(&pdev->dev, &mbc->adapter);
 	if (ret) {
-		dev_err(mbc->pcf->dev, "failed to register adapter\n");
+		dev_err(&pdev->dev, "failed to register adapter\n");
 		kfree(mbc);
 		return ret;
 	}
 
 	ret = power_supply_register(&pdev->dev, &mbc->usb);
 	if (ret) {
-		dev_err(mbc->pcf->dev, "failed to register usb\n");
+		dev_err(&pdev->dev, "failed to register usb\n");
 		power_supply_unregister(&mbc->adapter);
 		kfree(mbc);
 		return ret;
@@ -427,7 +557,7 @@ static int __devinit pcf50633_mbc_probe(struct platform_device *pdev)
 
 	ret = power_supply_register(&pdev->dev, &mbc->ac);
 	if (ret) {
-		dev_err(mbc->pcf->dev, "failed to register ac\n");
+		dev_err(&pdev->dev, "failed to register ac\n");
 		power_supply_unregister(&mbc->adapter);
 		power_supply_unregister(&mbc->usb);
 		kfree(mbc);
@@ -436,11 +566,24 @@ static int __devinit pcf50633_mbc_probe(struct platform_device *pdev)
 
 	ret = sysfs_create_group(&pdev->dev.kobj, &mbc_attr_group);
 	if (ret)
-		dev_err(mbc->pcf->dev, "failed to create sysfs entries\n");
+		dev_err(&pdev->dev, "failed to create sysfs entries\n");
 
 	mbcs1 = pcf50633_reg_read(mbc->pcf, PCF50633_REG_MBCS1);
-	if (mbcs1 & PCF50633_MBCS1_USBPRES)
+	dev_info(&pdev->dev, "MBCS1: %d %d %d%d %d %d %d %d\n",
+	         (mbcs1 & 0x0F) >> 7,
+	         (mbcs1 & 0x0D) >> 6,
+	         (mbcs1 & 0x0C) >> 5,
+	         (mbcs1 & 0x0A) >> 4,
+	         (mbcs1 & 0x08) >> 3,
+	         (mbcs1 & 0x04) >> 2,
+	         (mbcs1 & 0x02) >> 1,
+	          mbcs1 & 0x01);
+	if (mbcs1 & PCF50633_MBCS1_USBPRES) {
+		/* simulate vbus_draw */
+		mbc->usb_curlim = 500;
+		
 		pcf50633_mbc_irq_handler(PCF50633_IRQ_USBINS, mbc);
+	}
 	if (mbcs1 & PCF50633_MBCS1_ADAPTPRES)
 		pcf50633_mbc_irq_handler(PCF50633_IRQ_ADPINS, mbc);
 
@@ -451,6 +594,9 @@ static int __devexit pcf50633_mbc_remove(struct platform_device *pdev)
 {
 	struct pcf50633_mbc *mbc = platform_get_drvdata(pdev);
 	int i;
+
+	cancel_delayed_work_sync(&mbc->work);
+	// del_timer(&mbc->work.timer);
 
 	/* Remove IRQ handlers */
 	for (i = 0; i < ARRAY_SIZE(mbc_irq_handlers); i++)

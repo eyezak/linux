@@ -111,21 +111,12 @@ static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 	if (!pcf_bl)
 		return -ENOMEM;
 
-	memset(&bl_props, 0, sizeof(bl_props));
-	bl_props.type = BACKLIGHT_RAW;
-	bl_props.max_brightness = 0x3f;
-	bl_props.power = FB_BLANK_UNBLANK;
-
-	if (pdata) {
-		bl_props.brightness = pdata->default_brightness;
-		pcf_bl->brightness_limit = pdata->default_brightness_limit;
-	} else {
-		bl_props.brightness = 0x3f;
-		pcf_bl->brightness_limit = 0x3f;
-	}
-
+	pcf_bl->brightness_limit = pdata->default_brightness_limit;
 	pcf_bl->pcf = dev_to_pcf50633(pdev->dev.parent);
 
+	memset(&bl_props, 0, sizeof(struct backlight_properties));
+	bl_props.type = BACKLIGHT_RAW;
+	bl_props.max_brightness = 0x3f;
 	pcf_bl->bl = backlight_device_register(pdev->name, &pdev->dev, pcf_bl,
 						&pcf50633_bl_ops, &bl_props);
 
@@ -138,8 +129,8 @@ static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 
 	/* Should be different from bl_props.brightness, so we do not exit
 	 * update_status early the first time it's called */
-	pcf_bl->brightness = pcf_bl->bl->props.brightness + 1;
-
+	pcf_bl->bl->props.brightness = pdata->default_brightness;
+	pcf_bl->bl->props.power = FB_BLANK_UNBLANK;
 	backlight_update_status(pcf_bl->bl);
 
 	return 0;
