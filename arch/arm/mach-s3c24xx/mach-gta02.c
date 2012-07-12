@@ -884,7 +884,7 @@ static struct pcf50633_platform_data gta02_pcf_pdata = {
 	.force_shutdown_timeout = 8,
 
 	.gpio_base = GTA02_GPIO_PCF_BASE,
-	.irq_base = NR_IRQS,
+	.irq_base = IRQ_S3C2440_AC97 + 1,
 #endif
 
 	.backlight_data = &gta02_backlight_data,
@@ -1227,7 +1227,7 @@ MACHINE_START(NEO1973_GTA02, "GTA02")
 	.atag_offset	= 0x100,
 	.map_io			= gta02_map_io,
 	.init_irq		= gta02_init_irq,
-	.nr_irqs		= NR_IRQS + PCF50633_NUM_IRQS,
+//	.nr_irqs		= (IRQ_S3C2440_AC97+1),
 	.init_machine	= gta02_machine_init,
 	.timer			= &s3c24xx_timer,
 	.restart		= s3c244x_restart,

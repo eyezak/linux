@@ -66,6 +66,7 @@ static void pcf50633_irq_mask(struct irq_data *data)
 	bit = 1 << (irq & 0x07);
 
 	pcf->mask_regs[idx] |= bit;
+	dev_info(pcf->dev, "irq %d masked\n", irq);
 }
 
 static void pcf50633_irq_unmask(struct irq_data *data)
@@ -79,6 +80,7 @@ static void pcf50633_irq_unmask(struct irq_data *data)
 	bit = 1 << (irq & 0x07);
 
 	pcf->mask_regs[idx] &= ~bit;
+	dev_info(pcf->dev, "irq %d unmasked\n", irq);
 }
 
 static struct irq_chip pcf50633_irq_chip = {
@@ -194,10 +196,6 @@ static irqreturn_t pcf50633_irq(int irq, void *data)
 		else
 			pcf_int[0] &= ~PCF50633_INT1_ADPINS;
 	}
-
-	dev_dbg(pcf->dev, "INT1=0x%02x INT2=0x%02x INT3=0x%02x "
-			"INT4=0x%02x INT5=0x%02x\n", pcf_int[0],
-			pcf_int[1], pcf_int[2], pcf_int[3], pcf_int[4]);
 
 	/* Some revisions of the chip don't have a 8s standby mode on
 	 * ONKEY1S press. We try to manually do it in such cases. */
@@ -346,6 +344,7 @@ int pcf50633_irq_init(struct pcf50633 *pcf, int irq)
 	struct regmap_irq_chip_data *chip_data = NULL;
 	int ret;
 	int i;
+	int irq_base;
 
 	/* mask all interrupts */
 	memset(pcf->mask_regs, 0xff, 5);
@@ -353,30 +352,35 @@ int pcf50633_irq_init(struct pcf50633 *pcf, int irq)
 	if (ret != 0)
 		return ret;
 	
-	/*irq_base = irq_alloc_descs(-1, 0, PCF50633_NUM_IRQ, 0);*/
-	pcf->irqd = irq_domain_add_linear(pcf->dev->of_node,
+	/*pcf->irqd = irq_domain_add_linear(pcf->dev->of_node,
 	                       PCF50633_NUM_IRQ, &pcf50633_irq_ops, pcf);
 	if (IS_ERR(pcf->irqd)) {
 		dev_err(pcf->dev, "Failed to allocate irq domain: %ld\n", PTR_ERR(pcf->irqd));
 		return PTR_ERR(pcf->irqd);
 	}
-	dev_info(pcf->dev, "Allocated irq domain\n");
+	dev_info(pcf->dev, "Allocated irq domain\n");*/
 
 	mutex_init(&pcf->irq_lock);
 	pcf->irq = irq;
-	pcf->irq_base = pcf->pdata->irq_base ?: -1;
+	irq_base = irq_alloc_descs(pcf->pdata->irq_base ?: -1, 0, PCF50633_NUM_IRQ, 0);
+	if (irq_base <= 0) {
+		dev_err(pcf->dev, "Failed to allocate irq descs: %d\n", irq_base);
+		return irq_base;
+	} else
+		dev_info(pcf->dev, "Allocated irqs starting at %d\n", irq_base);
 
-	/* for (i = irq_base; i < irq_base + PCF50633_NUM_IRQ; ++i) {
+	for (i = irq_base; i < irq_base + PCF50633_NUM_IRQ; ++i) {
 		irq_set_chip_data(i, pcf);
 		irq_set_nested_thread(i, 1);
 		
 		//irq_set_chip_and_handler(i, &pcf50633_irq_chip, handle_simple_irq);
 		irq_set_chip(i, &pcf50633_irq_chip);
 		__irq_set_handler(i, handle_simple_irq, 0, NULL);
-		
+
 		irq_modify_status(i, IRQ_NOREQUEST, IRQ_NOPROBE);
-	}*/
-	for (i = pcf->irq_base; i < pcf->irq_base + PCF50633_NUM_IRQ; ++i) {
+	}
+	pcf->irq_base = irq_base;
+	/*for (i = pcf->irq_base; i < pcf->irq_base + PCF50633_NUM_IRQ; ++i) {
 		int irq = pcf->irqs[i] = irq_create_mapping(pcf->irqd, i);
 		if (i <= 0) {
 			dev_err(pcf->dev, "Unable to allocate pcf mapped irq %d\n", i);
@@ -388,7 +392,7 @@ int pcf50633_irq_init(struct pcf50633 *pcf, int irq)
 		irq_set_nested_thread(irq, 1);
 		irq_set_chip(irq, &pcf50633_irq_chip);
 		__irq_set_handler(irq, handle_simple_irq, 0, NULL);
-	}
+	}*/
 
 	/*ret = regmap_add_irq_chip(pcf->regmap, pcf->irq,
 	             IRQF_TRIGGER_LOW | IRQF_ONESHOT,
@@ -417,7 +421,7 @@ int pcf50633_irq_init(struct pcf50633 *pcf, int irq)
 
 err_irq_free_descs:
 	kfree(pcf->irqd);
-	//irq_free_descs(pcf->irq_base, PCF50633_NUM_IRQ);
+	irq_free_descs(pcf->irq_base, PCF50633_NUM_IRQ);
 
 	return ret;
 }
@@ -426,6 +430,6 @@ void pcf50633_irq_free(struct pcf50633 *pcf)
 {
 	kfree(pcf->irqd);
 	//regmap_del_irq_chip(pcf->irq, irq_get_irq_data(pcf->irq)->chip_data);
-	//free_irq(pcf->irq, pcf);
-	//irq_free_descs(pcf->irq_base, PCF50633_NUM_IRQ);
+	free_irq(pcf->irq, pcf);
+	irq_free_descs(pcf->irq_base, PCF50633_NUM_IRQ);
 }

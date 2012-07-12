@@ -257,6 +257,7 @@ static int __devinit pcf50633_rtc_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	
 	rtc->irq_alarm = platform_get_irq_byname(pdev, "ALARM");
+	rtc->irq_alarm = dev_to_pcf50633(pdev->dev.parent)->irq_base + PCF50633_IRQ_ALARM;
 	if (rtc->irq_alarm <= 0) {
 		ret = rtc->irq_alarm ?: -EINVAL;
 		dev_err(&pdev->dev, "Failed to get alarm irq: %d\n", ret);
