@@ -28,6 +28,9 @@
 
 #include <linux/mfd/core.h>
 #include <linux/mfd/pcf50633/core.h>
+#include <linux/mfd/pcf50633/adc.h>
+#include <linux/mfd/pcf50633/mbc.h>
+#include <linux/mfd/pcf50633/pmic.h>
 
 /* Read a block of upto 32 regs  */
 int pcf50633_read_block(struct pcf50633 *pcf, u8 reg,
@@ -172,9 +175,109 @@ static int pcf50633_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(pcf50633_pm, pcf50633_suspend, pcf50633_resume);
 
+static bool pcf50633_reg_readable(struct device *dev, unsigned int reg)
+{
+	switch (reg) {
+	case PCF50633_REG_RESERVED1:
+	case PCF50633_REG_RESERVED2:
+	case PCF50633_REG_RESERVED3:
+	case PCF50633_REG_RESERVED4 + 1:
+	case PCF50633_REG_RESERVED4 + 2:
+	case PCF50633_REG_RESERVED4 + 3:
+	case PCF50633_REG_RESERVED4 + 4:
+	case PCF50633_REG_RESERVED4 + 5:
+	case PCF50633_REG_RESERVED4 + 6:
+	case PCF50633_REG_RESERVED4 + 7:
+	case PCF50633_REG_RESERVED4 + 8:
+	case PCF50633_REG_RESERVED4 + 9:
+	case PCF50633_REG_RESERVED4 + 10:
+	case PCF50633_REG_RESERVED4 + 11:
+	case PCF50633_REG_RESERVED4 + 12:
+	case PCF50633_REG_RESERVED4 + 13:
+	case PCF50633_REG_RESERVED4 + 14:
+	case PCF50633_REG_RESERVED4 + 15:
+	case PCF50633_REG_RESERVED4 + 16:
+	case PCF50633_REG_RESERVED4 + 17:
+	case PCF50633_REG_RESERVED4 + 18:
+	case PCF50633_REG_RESERVED4 + 19:
+		return false;
+	default:
+		return true;
+	}
+}
+
+static bool pcf50633_reg_writeable(struct device *dev, unsigned int reg)
+{
+	switch (reg) {
+	case PCF50633_REG_INT1:
+	case PCF50633_REG_INT2:
+	case PCF50633_REG_INT3:
+	case PCF50633_REG_INT4:
+	case PCF50633_REG_INT5:
+	case PCF50633_REG_VERSION:
+	case PCF50633_REG_VARIANT:
+	case PCF50633_REG_OOCSTAT:
+	case PCF50633_REG_RESERVED1:
+	case PCF50633_REG_DCDCSTAT:
+	case PCF50633_REG_LDOSTAT:
+	case PCF50633_REG_MBCS1:
+	case PCF50633_REG_MBCS2:
+	case PCF50633_REG_MBCS3:
+	case PCF50633_REG_ALMDATA:
+	case PCF50633_REG_RESERVED2:
+	case PCF50633_REG_ADCS1:
+	case PCF50633_REG_ADCS2:
+	case PCF50633_REG_ADCS3:
+	case PCF50633_REG_RESERVED3:
+	case PCF50633_REG_RESERVED4 + 1:
+	case PCF50633_REG_RESERVED4 + 2:
+	case PCF50633_REG_RESERVED4 + 3:
+	case PCF50633_REG_RESERVED4 + 4:
+	case PCF50633_REG_RESERVED4 + 5:
+	case PCF50633_REG_RESERVED4 + 6:
+	case PCF50633_REG_RESERVED4 + 7:
+	case PCF50633_REG_RESERVED4 + 8:
+	case PCF50633_REG_RESERVED4 + 9:
+	case PCF50633_REG_RESERVED4 + 10:
+	case PCF50633_REG_RESERVED4 + 11:
+	case PCF50633_REG_RESERVED4 + 12:
+	case PCF50633_REG_RESERVED4 + 13:
+	case PCF50633_REG_RESERVED4 + 14:
+	case PCF50633_REG_RESERVED4 + 15:
+	case PCF50633_REG_RESERVED4 + 16:
+	case PCF50633_REG_RESERVED4 + 17:
+	case PCF50633_REG_RESERVED4 + 18:
+	case PCF50633_REG_RESERVED4 + 19:
+		return false;
+	default:
+		return true;
+	}
+}
+
+static bool pcf50633_reg_precious(struct device *dev, unsigned int reg)
+{
+	switch (reg) {
+	case PCF50633_REG_INT1:
+	case PCF50633_REG_INT2:
+	case PCF50633_REG_INT3:
+	case PCF50633_REG_INT4:
+	case PCF50633_REG_INT5:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static struct regmap_config pcf50633_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
+	
+/*	.cache_type = REGCACHE_RBTREE,
+	
+	.max_register = PCF50633_REG_DCDCPFM,
+	.readable_reg = pcf50633_reg_readable,
+	.writeable_reg = pcf50633_reg_writeable,
+	.precious_reg = pcf50633_reg_precious,	*/
 };
 
 #define PCF50633_CELL(_name) \
@@ -241,17 +344,17 @@ static struct mfd_cell pcf50633_cells[] = {
 	PCF50633_CELL_RESOURCES("pcf50633-adc", pcf50633_adc_resources),
 	PCF50633_CELL("pcf50633-backlight"),
 	PCF50633_CELL("pcf50633-gpio"),
-	PCF50633_CELL_ID("pcf50633-regltr", 0),
-	PCF50633_CELL_ID("pcf50633-regltr", 1),
-	PCF50633_CELL_ID("pcf50633-regltr", 2),
-	PCF50633_CELL_ID("pcf50633-regltr", 3),
-	PCF50633_CELL_ID("pcf50633-regltr", 4),
-	PCF50633_CELL_ID("pcf50633-regltr", 5),
-	PCF50633_CELL_ID("pcf50633-regltr", 6),
-	PCF50633_CELL_ID("pcf50633-regltr", 7),
-	PCF50633_CELL_ID("pcf50633-regltr", 8),
-	PCF50633_CELL_ID("pcf50633-regltr", 9),
-	PCF50633_CELL_ID("pcf50633-regltr", 10),
+	PCF50633_CELL_ID("pcf50633-regulator", 0),
+	PCF50633_CELL_ID("pcf50633-regulator", 1),
+	PCF50633_CELL_ID("pcf50633-regulator", 2),
+	PCF50633_CELL_ID("pcf50633-regulator", 3),
+	PCF50633_CELL_ID("pcf50633-regulator", 4),
+	PCF50633_CELL_ID("pcf50633-regulator", 5),
+	PCF50633_CELL_ID("pcf50633-regulator", 6),
+	PCF50633_CELL_ID("pcf50633-regulator", 7),
+	PCF50633_CELL_ID("pcf50633-regulator", 8),
+	PCF50633_CELL_ID("pcf50633-regulator", 9),
+	PCF50633_CELL_ID("pcf50633-regulator", 10),
 };
 
 static int __devinit pcf50633_probe(struct i2c_client *client,
@@ -261,7 +364,7 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 	struct pcf50633_platform_data *pdata = client->dev.platform_data;
 	struct mfd_cell *bl = &(pcf50633_cells[4]);
 	int ret;
-	int version, variant;
+	u8 version, variant;
 
 	if (!client->irq) {
 		dev_err(&client->dev, "Missing IRQ\n");
@@ -279,16 +382,15 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 	pcf->regmap = regmap_init_i2c(client, &pcf50633_regmap_config);
 	if (IS_ERR(pcf->regmap)) {
 		ret = PTR_ERR(pcf->regmap);
-		dev_err(pcf->dev, "Failed to allocate register map: %d\n",
-			ret);
+		dev_err(pcf->dev, "Failed to allocate register map: %d\n", ret);
 		goto err_free;
 	}
 
 	i2c_set_clientdata(client, pcf);
 	pcf->dev = &client->dev;
 
-	version = pcf50633_reg_read(pcf, 0);
-	variant = pcf50633_reg_read(pcf, 1);
+	regmap_read(pcf->regmap, PCF50633_REG_VERSION, &version);
+	regmap_read(pcf->regmap, PCF50633_REG_VARIANT, &variant);
 	if (version < 0 || variant < 0) {
 		dev_err(pcf->dev, "Unable to probe pcf50633\n");
 		ret = -ENODEV;
@@ -304,7 +406,6 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 
 	bl->platform_data = pdata->backlight_data;
 	bl->pdata_size = sizeof(struct pcf50633_bl_platform_data);
-	
 
 	ret = mfd_add_devices(pcf->dev, 0, pcf50633_cells,
 			ARRAY_SIZE(pcf50633_cells), NULL, pcf->irq_base);
@@ -316,9 +417,6 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 	ret = sysfs_create_group(&client->dev.kobj, &pcf_attr_group);
 	if (ret)
 		dev_err(pcf->dev, "error creating sysfs entries\n");
-
-	if (pdata->probe_done)
-		pdata->probe_done(pcf);
 
 	return 0;
 

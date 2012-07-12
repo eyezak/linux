@@ -25,12 +25,17 @@
 #include <linux/mfd/pcf50633/backlight.h>
 
 struct pcf50633_bl {
-	struct pcf50633 *pcf;
+	struct device *dev;
 	struct backlight_device *bl;
 
 	unsigned int brightness;
 	unsigned int brightness_limit;
 };
+
+static inline struct pcf50633 * __to_pcf(struct pcf50633_bl *bl)
+{
+	return dev_to_pcf50633(bl->dev->parent);
+}
 
 /*
  * pcf50633_bl_set_brightness_limit
@@ -44,7 +49,7 @@ struct pcf50633_bl {
  */
 int pcf50633_bl_set_brightness_limit(struct pcf50633 *pcf, unsigned int limit)
 {
-	struct pcf50633_bl *pcf_bl = platform_get_drvdata(pcf->bl_pdev);
+	struct pcf50633_bl *pcf_bl = pcf->bl;
 
 	if (!pcf_bl)
 		return -ENODEV;
@@ -58,30 +63,29 @@ int pcf50633_bl_set_brightness_limit(struct pcf50633 *pcf, unsigned int limit)
 static int pcf50633_bl_update_status(struct backlight_device *bl)
 {
 	struct pcf50633_bl *pcf_bl = bl_get_data(bl);
+	struct pcf50633 *pcf = __to_pcf(pcf_bl);
 	unsigned int new_brightness;
-
 
 	if (bl->props.state & (BL_CORE_SUSPENDED | BL_CORE_FBBLANK) ||
 		bl->props.power != FB_BLANK_UNBLANK)
 		new_brightness = 0;
-	else if (bl->props.brightness < pcf_bl->brightness_limit)
-		new_brightness = bl->props.brightness;
-	else
+	else if (bl->props.brightness > pcf_bl->brightness_limit)
 		new_brightness = pcf_bl->brightness_limit;
+	else 
+		new_brightness = bl->props.brightness;
 
 
 	if (pcf_bl->brightness == new_brightness)
 		return 0;
 
 	if (new_brightness) {
-		pcf50633_reg_write(pcf_bl->pcf, PCF50633_REG_LEDOUT,
+		pcf50633_reg_write(pcf, PCF50633_REG_LEDOUT,
 					new_brightness);
 		if (!pcf_bl->brightness)
-			pcf50633_reg_write(pcf_bl->pcf, PCF50633_REG_LEDENA, 1);
+			pcf50633_reg_write(pcf, PCF50633_REG_LEDENA, 1);
 	} else {
-		pcf50633_reg_write(pcf_bl->pcf, PCF50633_REG_LEDENA, 0);
+		pcf50633_reg_write(pcf, PCF50633_REG_LEDENA, 0);
 	}
-
 	pcf_bl->brightness = new_brightness;
 
 	return 0;
@@ -101,33 +105,37 @@ static const struct backlight_ops pcf50633_bl_ops = {
 
 static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 {
-	struct pcf50633_bl *pcf_bl;
-	struct device *parent = pdev->dev.parent;
-	struct pcf50633_platform_data *pcf50633_data = parent->platform_data;
+	struct pcf50633_platform_data *pcf50633_data = pdev->dev.parent->platform_data;
 	struct pcf50633_bl_platform_data *pdata = pcf50633_data->backlight_data;
-	struct backlight_properties bl_props;
+	struct pcf50633_bl *pcf_bl;
+	struct pcf50633 *pcf;
+	struct backlight_properties props;
 
 	pcf_bl = devm_kzalloc(&pdev->dev, sizeof(*pcf_bl), GFP_KERNEL);
 	if (!pcf_bl)
 		return -ENOMEM;
 
+	pcf_bl->dev = &pdev->dev;
+	pcf = __to_pcf(pcf_bl);
+	pcf->bl = pcf_bl;
 	pcf_bl->brightness_limit = pdata->default_brightness_limit;
-	pcf_bl->pcf = dev_to_pcf50633(pdev->dev.parent);
 
-	memset(&bl_props, 0, sizeof(struct backlight_properties));
-	bl_props.type = BACKLIGHT_RAW;
-	bl_props.max_brightness = 0x3f;
+	memset(&props, 0, sizeof(struct backlight_properties));
+	props.type = BACKLIGHT_RAW;
+	props.max_brightness = 0x3f;
 	pcf_bl->bl = backlight_device_register(pdev->name, &pdev->dev, pcf_bl,
-						&pcf50633_bl_ops, &bl_props);
+						&pcf50633_bl_ops, &props);
 
-	if (IS_ERR(pcf_bl->bl))
+	if (IS_ERR(pcf_bl->bl)) {
+		pcf->bl = NULL;
 		return PTR_ERR(pcf_bl->bl);
+	}
 
 	platform_set_drvdata(pdev, pcf_bl);
 
-	pcf50633_reg_write(pcf_bl->pcf, PCF50633_REG_LEDDIM, pdata->ramp_time);
+	pcf50633_reg_write(pcf, PCF50633_REG_LEDDIM, pdata->ramp_time);
 
-	/* Should be different from bl_props.brightness, so we do not exit
+	/* Should be different from props.brightness, so we do not exit
 	 * update_status early the first time it's called */
 	pcf_bl->bl->props.brightness = pdata->default_brightness;
 	pcf_bl->bl->props.power = FB_BLANK_UNBLANK;
@@ -140,8 +148,12 @@ static int __devexit pcf50633_bl_remove(struct platform_device *pdev)
 {
 	struct pcf50633_bl *pcf_bl = platform_get_drvdata(pdev);
 
-	backlight_device_unregister(pcf_bl->bl);
+	pcf_bl->bl->props.power = 0;
+	pcf_bl->bl->props.brightness = 0;
+	backlight_update_status(pcf_bl->bl);
 
+	__to_pcf(pcf_bl)->bl = NULL;
+	backlight_device_unregister(pcf_bl->bl);
 	platform_set_drvdata(pdev, NULL);
 
 	return 0;

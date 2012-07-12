@@ -59,6 +59,8 @@ struct pcf50633_time {
 struct pcf50633_rtc {
 	int alarm_enabled;
 	int alarm_pending;
+	int irq_alarm;
+	int irq_second;
 
 	struct pcf50633 *pcf;
 	struct rtc_device *rtc_dev;
@@ -90,15 +92,11 @@ static int
 pcf50633_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
 	struct pcf50633_rtc *rtc = dev_get_drvdata(dev);
-	int err;
 
-	if (enabled)
-		err = pcf50633_irq_unmask(rtc->pcf, PCF50633_IRQ_ALARM);
-	else
-		err = pcf50633_irq_mask(rtc->pcf, PCF50633_IRQ_ALARM);
-
-	if (err < 0)
-		return err;
+	if (enabled && !rtc->alarm_enabled)
+		enable_irq(rtc->irq_alarm);
+	else if (!enabled && rtc->alarm_enabled)
+		disable_irq(rtc->irq_alarm);
 
 	rtc->alarm_enabled = enabled;
 
@@ -142,7 +140,7 @@ static int pcf50633_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
 	struct pcf50633_rtc *rtc;
 	struct pcf50633_time pcf_tm;
-	int alarm_masked, ret = 0;
+	int ret = 0;
 
 	rtc = dev_get_drvdata(dev);
 
@@ -161,18 +159,17 @@ static int pcf50633_rtc_set_time(struct device *dev, struct rtc_time *tm)
 		pcf_tm.time[PCF50633_TI_SEC]);
 
 
-	alarm_masked = pcf50633_irq_mask_get(rtc->pcf, PCF50633_IRQ_ALARM);
-
-	if (!alarm_masked)
-		pcf50633_irq_mask(rtc->pcf, PCF50633_IRQ_ALARM);
+	//alarm_masked = pcf50633_irq_mask_get(rtc->pcf, PCF50633_IRQ_ALARM);
+	if (rtc->alarm_enabled)
+		disable_irq(rtc->irq_alarm);
 
 	/* Returns 0 on success */
 	ret = pcf50633_write_block(rtc->pcf, PCF50633_REG_RTCSC,
 					     PCF50633_TI_EXTENT,
 					     &pcf_tm.time[0]);
 
-	if (!alarm_masked)
-		pcf50633_irq_unmask(rtc->pcf, PCF50633_IRQ_ALARM);
+	if (rtc->alarm_enabled)
+		enable_irq(rtc->irq_alarm);
 
 	return ret;
 }
@@ -204,7 +201,7 @@ static int pcf50633_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
 	struct pcf50633_rtc *rtc;
 	struct pcf50633_time pcf_tm;
-	int alarm_masked, ret = 0;
+	int ret = 0;
 
 	rtc = dev_get_drvdata(dev);
 
@@ -213,11 +210,11 @@ static int pcf50633_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	/* do like mktime does and ignore tm_wday */
 	pcf_tm.time[PCF50633_TI_WKDAY] = 7;
 
-	alarm_masked = pcf50633_irq_mask_get(rtc->pcf, PCF50633_IRQ_ALARM);
+	// alarm_masked = pcf50633_irq_mask_get(rtc->pcf, PCF50633_IRQ_ALARM);
 
 	/* disable alarm interrupt */
-	if (!alarm_masked)
-		pcf50633_irq_mask(rtc->pcf, PCF50633_IRQ_ALARM);
+	if (rtc->alarm_enabled)
+		disable_irq(rtc->irq_alarm);
 
 	/* Returns 0 on success */
 	ret = pcf50633_write_block(rtc->pcf, PCF50633_REG_RTCSCA,
@@ -225,8 +222,8 @@ static int pcf50633_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	if (!alrm->enabled)
 		rtc->alarm_pending = 0;
 
-	if (!alarm_masked || alrm->enabled)
-		pcf50633_irq_unmask(rtc->pcf, PCF50633_IRQ_ALARM);
+	if (!rtc->alarm_enabled || alrm->enabled)
+		enable_irq(rtc->irq_alarm);
 	rtc->alarm_enabled = alrm->enabled;
 
 	return ret;
@@ -240,21 +237,38 @@ static struct rtc_class_ops pcf50633_rtc_ops = {
 	.alarm_irq_enable	= pcf50633_rtc_alarm_irq_enable,
 };
 
-static void pcf50633_rtc_irq(int irq, void *data)
+static irqreturn_t pcf50633_rtc_irq(int irq, void *data)
 {
 	struct pcf50633_rtc *rtc = data;
 
 	rtc_update_irq(rtc->rtc_dev, 1, RTC_AF | RTC_IRQF);
 	rtc->alarm_pending = 1;
+
+	return IRQ_HANDLED;
 }
 
 static int __devinit pcf50633_rtc_probe(struct platform_device *pdev)
 {
+	int ret;
 	struct pcf50633_rtc *rtc;
 
 	rtc = kzalloc(sizeof(*rtc), GFP_KERNEL);
 	if (!rtc)
 		return -ENOMEM;
+	
+	rtc->irq_alarm = platform_get_irq_byname(pdev, "ALARM");
+	if (rtc->irq_alarm <= 0) {
+		ret = rtc->irq_alarm ?: -EINVAL;
+		dev_err(&pdev->dev, "Failed to get alarm irq: %d\n", ret);
+		goto err_free;
+	}
+
+	/*rtc->irq_second = platform_get_irq_byname(pdev, "SECOND");
+	if (rtc->irq_second <= 0) {
+		ret = rtc->irq_second ?: -EINVAL;
+		dev_err(&pdev->dev, "Failed to get second irq: %d\n", ret);
+		goto err_free;
+	}*/
 
 	rtc->pcf = dev_to_pcf50633(pdev->dev.parent);
 	platform_set_drvdata(pdev, rtc);
@@ -262,14 +276,31 @@ static int __devinit pcf50633_rtc_probe(struct platform_device *pdev)
 				&pcf50633_rtc_ops, THIS_MODULE);
 
 	if (IS_ERR(rtc->rtc_dev)) {
-		int ret =  PTR_ERR(rtc->rtc_dev);
-		kfree(rtc);
-		return ret;
+		ret =  PTR_ERR(rtc->rtc_dev);
+		goto err_free;
 	}
 
-	pcf50633_register_irq(rtc->pcf, PCF50633_IRQ_ALARM,
-					pcf50633_rtc_irq, rtc);
+	ret = request_threaded_irq(rtc->irq_alarm, NULL, 
+                         pcf50633_rtc_irq, 0, "pcf50633-rtc alarm", rtc);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to request alarm irq: %d\n", ret);
+		goto err_free;
+	}
+
+/*	ret = request_threaded_irq(rtc->irq_alarm, NULL, 
+                         pcf50633_rtc_irq, 0, "pcf50633-rtc second", rtc);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to request second irq: %d\n", ret);
+		goto err_free_irq_alarm;
+	}*/
+
 	return 0;
+
+/* err_free_irq_alarm:
+	free_irq(rtc->irq_alarm, rtc); */
+err_free:
+	kfree(rtc);
+	return ret;
 }
 
 static int __devexit pcf50633_rtc_remove(struct platform_device *pdev)
@@ -278,7 +309,8 @@ static int __devexit pcf50633_rtc_remove(struct platform_device *pdev)
 
 	rtc = platform_get_drvdata(pdev);
 
-	pcf50633_free_irq(rtc->pcf, PCF50633_IRQ_ALARM);
+	free_irq(rtc->irq_alarm, rtc);
+	/* free_irq(rtc->irq_second, rtc); */
 
 	rtc_device_unregister(rtc->rtc_dev);
 	kfree(rtc);

@@ -23,6 +23,7 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/completion.h>
+#include <linux/interrupt.h>
 
 #include <linux/mfd/pcf50633/core.h>
 #include <linux/mfd/pcf50633/adc.h>
@@ -35,8 +36,14 @@ struct pcf50633_adc_sync_request {
 
 static inline struct pcf50633_adc *__to_adc(struct pcf50633 *pcf)
 {
-	return platform_get_drvdata(pcf->adc_pdev);
+	return pcf->adc;
 }
+
+static inline struct pcf50633 * __to_pcf(struct pcf50633_adc *adc)
+{
+	return dev_to_pcf50633(adc->dev->parent);
+}
+
 
 static void adc_setup(struct pcf50633 *pcf, int channel, int avg)
 {
@@ -152,10 +159,10 @@ static int adc_result(struct pcf50633 *pcf)
 	return result;
 }
 
-static void pcf50633_adc_irq(int irq, void *data)
+static irqreturn_t pcf50633_adc_irq(int irq, void *data)
 {
 	struct pcf50633_adc *adc = data;
-	struct pcf50633 *pcf = adc->pcf;
+	struct pcf50633 *pcf = __to_pcf(adc);
 	struct pcf50633_adc_request *req;
 	int head, res;
 
@@ -166,7 +173,7 @@ static void pcf50633_adc_irq(int irq, void *data)
 	if (WARN_ON(!req)) {
 		dev_err(pcf->dev, "pcf50633-adc irq: ADC queue empty!\n");
 		mutex_unlock(&adc->queue_mutex);
-		return;
+		return IRQ_HANDLED;
 	}
 	adc->queue[head] = NULL;
 	adc->queue_head = (head + 1) &
@@ -179,27 +186,46 @@ static void pcf50633_adc_irq(int irq, void *data)
 
 	req->callback(pcf, req->callback_param, res);
 	kfree(req);
+
+	return IRQ_HANDLED;
 }
 
 static int __devinit pcf50633_adc_probe(struct platform_device *pdev)
 {
 	struct pcf50633_adc *adc;
+	int ret;
 
 	adc = kzalloc(sizeof(*adc), GFP_KERNEL);
 	if (!adc)
 		return -ENOMEM;
 
-	adc->pcf = dev_to_pcf50633(pdev->dev.parent);
+	adc->dev = &pdev->dev;
 	platform_set_drvdata(pdev, adc);
 	adc->async_read = pcf50633_adc_async_read;
 	adc->sync_read = pcf50633_adc_sync_read;
 
-	pcf50633_register_irq(adc->pcf, PCF50633_IRQ_ADCRDY,
-					pcf50633_adc_irq, adc);
+	adc->irq = platform_get_irq(pdev, 0);
+	if (adc->irq <= 0) {
+		ret = adc->irq;
+		dev_err(&pdev->dev, "Failed to get irq: %d\n", ret);
+		goto err_free;
+	}
+	
+	ret = request_threaded_irq(adc->irq, NULL, pcf50633_adc_irq, 0,
+	                           dev_name(&pdev->dev), adc);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to request irq: %d\n", ret);
+		goto err_free;
+	}
 
 	mutex_init(&adc->queue_mutex);
+	__to_pcf(adc)->adc = adc;
 
 	return 0;
+
+err_free:
+	kfree(adc);
+	return ret;
 }
 
 static int __devexit pcf50633_adc_remove(struct platform_device *pdev)
@@ -207,19 +233,22 @@ static int __devexit pcf50633_adc_remove(struct platform_device *pdev)
 	struct pcf50633_adc *adc = platform_get_drvdata(pdev);
 	int i, head;
 
-	pcf50633_free_irq(adc->pcf, PCF50633_IRQ_ADCRDY);
+	free_irq(adc->irq, adc);
 
 	mutex_lock(&adc->queue_mutex);
 	head = adc->queue_head;
 
 	if (WARN_ON(adc->queue[head]))
-		dev_err(adc->pcf->dev,
+		dev_err(pdev->dev.parent,
 			"adc driver removed with request pending\n");
 
 	for (i = 0; i < PCF50633_MAX_ADC_FIFO_DEPTH; i++)
 		kfree(adc->queue[i]);
 
 	mutex_unlock(&adc->queue_mutex);
+	
+	__to_pcf(adc)->adc = NULL;
+	platform_set_drvdata(pdev, NULL);
 	kfree(adc);
 
 	return 0;

@@ -63,6 +63,39 @@
 #define PCF50633_ADCS3_ADCDAT2L_SHIFT	2
 #define PCF50633_ASCS3_REF_MASK		0x70
 
+
+#define PCF50633_MAX_ADC_FIFO_DEPTH 8
+
+
+#define ADC_NOM_CHG_DETECT_1A  6
+#define ADC_NOM_CHG_DETECT_USB 43
+
+struct pcf50633_adc_request {
+	int mux;
+	int avg;
+	void (*callback)(struct pcf50633 *, void *, int);
+	void *callback_param;
+};
+
+
+struct pcf50633_adc {
+	struct device *dev;
+
+	/* Private stuff */
+	int queue_head;
+	int queue_tail;
+	int irq;
+
+	struct mutex queue_mutex;	
+	struct pcf50633_adc_request *queue[PCF50633_MAX_ADC_FIFO_DEPTH];
+	
+	int (*async_read) (struct pcf50633 *, int, int,
+	                   void (*callback)(struct pcf50633 *, void *, int),
+	                   void *callback_param);
+	int (*sync_read) (struct pcf50633 *, int, int);
+};
+
+
 extern int
 pcf50633_adc_async_read(struct pcf50633 *pcf, int mux, int avg,
 		void (*callback)(struct pcf50633 *, void *, int),

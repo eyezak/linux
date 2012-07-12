@@ -18,6 +18,7 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 #include <linux/power_supply.h>
+#include <linux/irqdomain.h>
 #include <linux/mfd/pcf50633/backlight.h>
 
 struct pcf50633;
@@ -28,6 +29,11 @@ struct regmap;
 struct pcf50633_platform_data {
 	struct regulator_init_data reg_init_data[PCF50633_NUM_REGULATORS];
 
+	struct pcf50633_bl_platform_data *backlight_data;
+
+	/* Callbacks */
+	void (*regulator_registered)(struct device  *, int);
+
 	char **batteries;
 	int num_batteries;
 
@@ -37,18 +43,14 @@ struct pcf50633_platform_data {
 	 * Manual.
 	 */
 	int charger_reference_current_ma;
-
-	/* Callbacks */
-	void (*probe_done)(struct pcf50633 *);
-	void (*mbc_event_callback)(struct pcf50633 *, int);
-	void (*regulator_registered)(struct pcf50633 *, int);
-	void (*force_shutdown)(struct pcf50633 *);
+	int charger_timeout;
+	int gpio_base;
+	int irq_base;
+	/* set to -1 to disable */
+	int force_shutdown_timeout;
 
 	u8 resumers[5];
 
-	struct pcf50633_bl_platform_data *backlight_data;
-
-	int gpio_base;
 };
 
 int pcf50633_read_block(struct pcf50633 *, u8 reg,
@@ -74,6 +76,10 @@ int pcf50633_reg_clear_bits(struct pcf50633 *pcf, u8 reg, u8 bits);
 #define PCF50633_REG_INT3M	0x09
 #define PCF50633_REG_INT4M	0x0a
 #define PCF50633_REG_INT5M	0x0b
+
+#define PCF50633_NUM_INT_REGS 5
+#define PCF50633_NUM_IRQS  (PCF50633_NUM_INT_REGS * 8)
+
 
 enum {
 	/* Chip IRQs */
@@ -130,17 +136,19 @@ struct pcf50633 {
 	int irq;
 	struct mutex lock;
 	struct mutex irq_lock;
+	struct irq_domain *irqd;
 
 	u8 mask_regs[5];
 	u8 mask_regs_cur[5];
 
 	u8 suspend_irq_masks[5];
 	u8 resume_reason[5];
-	int is_suspended;
 
+	int is_suspended;
 	int onkey1s_held;
 
 	unsigned int irq_base;
+	unsigned int irqs[PCF50633_NUM_IRQS];
 
 	struct pcf50633_mbc *mbc;
 	struct pcf50633_adc *adc;
@@ -203,6 +211,20 @@ enum pcf50633_reg_int5 {
 
 /* misc. registers */
 #define PCF50633_REG_OOCSHDWN	0x0c
+#define PCF50633_REG_OOCSTAT	0x12
+#define PCF50633_REG_VERSION	0x00
+#define PCF50633_REG_VARIANT	0x01
+#define PCF50633_REG_DCDCSTAT	0x43
+#define PCF50633_REG_LDOSTAT	0x42
+#define PCF50633_REG_ALMDATA	0x50
+#define PCF50633_REG_DCDCPFM	0x84
+
+/* reserved registers (and 20 starting at RESERVED4) */
+#define PCF50633_REG_RESERVED1  0x2c
+#define PCF50633_REG_RESERVED2  0x51
+#define PCF50633_REG_RESERVED3	0x58
+#define PCF50633_REG_RESERVED4	0x6f
+
 
 /* LED registers */
 #define PCF50633_REG_LEDOUT 0x28

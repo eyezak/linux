@@ -122,6 +122,7 @@ struct lis3lv02d_platform_data {
 	s16 st_min_limits[3]; /* min pass limit x, y, z */
 	s16 st_max_limits[3]; /* max pass limit x, y, z */
 	int irq2;
+	int id;
 };
 
 #endif /* __LIS3LV02D_H_ */

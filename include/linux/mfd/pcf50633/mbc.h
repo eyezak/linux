@@ -125,10 +125,49 @@ enum pcf50633_reg_mbcs3 {
 #define PCF50633_MBC_ADAPTER_ONLINE	0x04
 #define PCF50633_MBC_ADAPTER_ACTIVE	0x08
 
-int pcf50633_mbc_usb_curlim_set(struct pcf50633 *pcf, int ma);
+enum pcf50633_mbc_irqs {
+	PCF50633_MBC_IRQ_ADPINS,
+	PCF50633_MBC_IRQ_ADPREM,
+	PCF50633_MBC_IRQ_USBINS,
+	PCF50633_MBC_IRQ_USBREM,
+	PCF50633_MBC_IRQ_BATFULL,
+	PCF50633_MBC_IRQ_CHGHALT,
+	PCF50633_MBC_IRQ_THLIMON,
+	PCF50633_MBC_IRQ_THLIMOFF,
+	PCF50633_MBC_IRQ_USBLIMON,
+	PCF50633_MBC_IRQ_USBLIMOFF,
+	PCF50633_MBC_IRQ_LOWSYS,
+	PCF50633_MBC_IRQ_LOWBAT,
+	PCF50633_MBC_NUM_IRQS,
+};
 
-int pcf50633_mbc_get_status(struct pcf50633 *);
-int pcf50633_mbc_get_usb_online_status(struct pcf50633 *);
+struct pcf50633_mbc;
+
+struct pcf50633_mbc {
+	struct device *dev;
+
+	int adapter_online;
+	int usb_online;
+	int usb_curlim;
+	
+	int irqs[PCF50633_MBC_NUM_IRQS];
+
+	struct power_supply usb;
+	struct power_supply adapter;
+	struct power_supply ac;
+
+	struct delayed_work work;
+	
+	int (*get_status)(struct pcf50633_mbc *mbc);
+	int (*usb_curlim_set)(struct pcf50633_mbc *mbc, int ma);
+	void (*vbus_draw)(struct pcf50633_mbc *mbc, int ma);
+};
+
+
+int pcf50633_mbc_usb_curlim_set(struct pcf50633_mbc *mbc, int ma);
+
+int pcf50633_mbc_get_status(struct pcf50633_mbc *mbc);
+int pcf50633_mbc_get_usb_online_status(struct pcf50633_mbc *mbc);
 
 #endif
 

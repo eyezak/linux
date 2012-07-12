@@ -97,6 +97,12 @@ config GPIO_GENERIC_PLATFORM
 	help
 	  Say yes here to support basic platform_device memory-mapped GPIO controllers.
 
+config GPIO_GLAMO
+	tristate "Glamo GPIO support"
+	depends on MFD_GLAMO
+	help
+	  Say yes here to support GPIO functionality of the Smedia Glamo.
+
 config GPIO_IT8761E
 	tristate "IT8761E GPIO support"
 	depends on X86  # unconditional access to IO space.
@@ -161,6 +167,13 @@ config GPIO_MXS
 	depends on ARCH_MXS
 	select GPIO_GENERIC
 	select GENERIC_IRQ_CHIP
+
+config GPIO_PCF50633
+	tristate "Support for NXP PCF50633 GPIO"
+	depends on MFD_PCF50633
+	help
+	 Say yes here if you want to include support GPIO for pins on
+	 the PCF50633 chip.
 
 config GPIO_PL061
 	bool "PrimeCell PL061 GPIO support"

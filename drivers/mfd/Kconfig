@@ -600,8 +600,10 @@ config MFD_WM8994
 
 config MFD_PCF50633
 	tristate "Support for NXP PCF50633"
-	depends on I2C
+	depends on I2C && GENERIC_HARDIRQS
+	select MFD_CORE
 	select REGMAP_I2C
+	select REGMAP_IRQ
 	help
 	  Say yes here if you have NXP PCF50633 chip on your board.
 	  This core driver provides register access and IRQ handling
@@ -614,13 +616,6 @@ config PCF50633_ADC
 	help
 	 Say yes here if you want to include support for ADC in the
 	 NXP PCF50633 chip.
-
-config PCF50633_GPIO
-	tristate "Support for NXP PCF50633 GPIO"
-	depends on MFD_PCF50633
-	help
-	 Say yes here if you want to include support GPIO for pins on
-	 the PCF50633 chip.
 
 config MFD_MC13783
 	tristate
@@ -775,6 +770,14 @@ config LPC_ICH
 	  many functional units. This driver provides needed support for
 	  other drivers to control these functions, currently GPIO and
 	  watchdog.
+
+config MFD_GLAMO
+	tristate "Smedia Glamo 336x/337x support"
+	select MFD_CORE
+	help
+	  This enables the core driver for the Smedia Glamo 336x/337x
+	  multi-function device.  It includes irq_chip demultiplex as
+	  well as clock / power management and GPIO support.
 
 config MFD_RDC321X
 	tristate "Support for RDC-R321x southbridge"

@@ -130,7 +130,7 @@ int pcf50633_gpio_power_supply_set(struct pcf50633 *pcf,
 }
 EXPORT_SYMBOL_GPL(pcf50633_gpio_power_supply_set);
 
-u8 pcf50633_gpio_get(struct pcf50633 *pcf, int gpio)
+/*u8 pcf50633_gpio_get(struct pcf50633 *pcf, int gpio)
 {
 	struct gpio_chip * chip = platform_get_drvdata(pcf->gpio_pdev);
 	return chip->get(chip, gpio);
@@ -143,7 +143,7 @@ int pcf50633_gpio_set(struct pcf50633 *pcf, int gpio, u8 val)
 	chip->set(chip, gpio, val);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(pcf50633_gpio_set);
+EXPORT_SYMBOL_GPL(pcf50633_gpio_set);*/
 
 
 static int __devinit pcf50633_gpio_probe(struct platform_device *pdev)

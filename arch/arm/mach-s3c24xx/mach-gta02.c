@@ -26,7 +26,7 @@
  *
  */
 
-// #define DH_PRESENT
+#define DH_PRESENT
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -99,7 +99,7 @@
 #include <mach/gta02.h>
 
 #ifdef DH_PRESENT
-#include <linux/power/fiq-hdq.h>
+//#include <linux/power/fiq-hdq.h>
 #endif
 
 #include <plat/usb-control.h>
@@ -195,9 +195,12 @@ static struct platform_device gta02_nor_flash = {
 	.num_resources		= 1,
 };
 
+static struct nand_ecclayout gta02_nand_layout = {
+	.eccbytes = 8,
+};
 
 /*	NAND Flash  */
-static struct s3c2410_nand_set __initdata gta02_nand_sets[] = {
+static struct s3c2410_nand_set gta02_nand_sets[] = {
 	[0] = {
 		/*
 		 * This name is also hard-coded in the boot loaders, so
@@ -208,6 +211,7 @@ static struct s3c2410_nand_set __initdata gta02_nand_sets[] = {
 		.name		= "neo1973-nand",
 		.nr_chips	= 1,
 		.flash_bbt	= 1,
+//		.eec_layout = &gta02_nand_layout;
 	},
 };
 
@@ -227,13 +231,11 @@ static struct s3c2410_platform_nand __initdata gta02_nand_info = {
 /* USB: udc */
 static void gta02_udc_vbus_draw(unsigned int ma)
 {
-#ifdef pcf50633_mbc
-	struct pcf50633_mbc *mbc;
-	if (!gta02_pcf || !gta02_pcf->mbc_pdev)
+#ifdef __LINUX_MFD_PCF50633_MBC_H
+	if (!gta02_pcf || !gta02_pcf->mbc)
 		return;
 
-	mbc = platform_get_drvdata(gta02_pcf->mbc_pdev);
-	mbc->vbus_draw(gta02_pcf, ma);
+	gta02_pcf->mbc->vbus_draw(gta02_pcf->mbc, ma);
 #endif
 }
 
@@ -367,7 +369,7 @@ static struct platform_device gta02_leds_device = {
 };
 
 /* JBT6K74 display controller */
-#ifdef jbt6k74_platform_data
+#ifdef __JBT6K74_H__
 const static struct jbt6k74_platform_data jbt6k74_pdata = {
 	.gpio_reset = GTA02_GPIO_GLAMO(4),
 };
@@ -543,7 +545,7 @@ static struct fb_videomode gta02_glamo_modes[] = {
 		.vmode = FB_VMODE_NONINTERLACED,
 	}
 };
-#ifdef glamo_fb_platform_data
+#ifdef _LINUX_GLAMOFB_H
 static struct glamo_fb_platform_data gta02_glamo_fb_pdata = {
 	.width  = 43,
 	.height = 58,
@@ -565,7 +567,7 @@ static int gta02_glamo_mci_use_slow(void)
 	return 0;
 }
 
-#ifdef glamo_mmc_platform_data
+#ifdef __GLAMO_MFD_H
 static struct glamo_mmc_platform_data gta02_glamo_mmc_pdata = {
 	.glamo_mmc_use_slow = gta02_glamo_mci_use_slow,
 };
@@ -574,7 +576,7 @@ static struct {} gta02_glamo_mmc_pdata;
 #endif
 
 /*	GLAMO-GPIO  */
-#ifdef glamo_gpio_platform_data
+#ifdef __GLAMO_MFD_H
 static struct glamo_gpio_platform_data gta02_glamo_gpio_pdata = {
 	.base = GTA02_GPIO_GLAMO_BASE,
 };
@@ -613,7 +615,7 @@ static struct resource gta02_glamo_resources[] = {
 		.flags	= IORESOURCE_IRQ,
 	},
 };
-#ifdef glamo_platform_data
+#ifdef __GLAMO_MFD_H
 static struct glamo_platform_data gta02_glamo_pdata = {
 	.fb_data    = &gta02_glamo_fb_pdata,
 	.mmc_data   = &gta02_glamo_mmc_pdata,
@@ -761,10 +763,12 @@ static struct {} gta02_hdq_device_info;
 #endif
 
 /* BQ27000 Battery */
-#ifdef bq27000_platform_data
+#ifdef __LINUX_BQ27X00_BATTERY_H__
 static struct bq27000_platform_data bq27000_pdata = {
         .name = "battery",
+#ifdef hdq_device_info
         .hdq_info = &gta02_hdq_device_info,
+#endif
 };
 #else
 static struct {} bq27000_pdata;
@@ -792,14 +796,14 @@ static int gta02_get_charger_online_status(void)
 {
 	struct pcf50633 *pcf = gta02_pcf;
 
-	return pcf50633_mbc_get_status(pcf) & PCF50633_MBC_USB_ONLINE;
+	return pcf->mbc->get_status(pcf->mbc) & PCF50633_MBC_USB_ONLINE;
 }
 
 static int gta02_get_charger_active_status(void)
 {
 	struct pcf50633 *pcf = gta02_pcf;
 
-	return pcf50633_mbc_get_status(pcf) & PCF50633_MBC_USB_ACTIVE;
+	return pcf->mbc->get_status(pcf->mbc) & PCF50633_MBC_USB_ACTIVE;
 }
 
 static void gta02_poweroff(void)
@@ -857,7 +861,7 @@ static struct pcf50633_bl_platform_data gta02_backlight_data = {
 	.ramp_time = 5,
 };
 
-#define UPSTREAM_PCF
+// #define UPSTREAM_PCF
 static struct pcf50633_platform_data gta02_pcf_pdata = {
 	.resumers = {
 		[0] =	PCF50633_INT1_USBINS |
@@ -880,6 +884,7 @@ static struct pcf50633_platform_data gta02_pcf_pdata = {
 	.force_shutdown_timeout = 8,
 
 	.gpio_base = GTA02_GPIO_PCF_BASE,
+	.irq_base = NR_IRQS,
 #endif
 
 	.backlight_data = &gta02_backlight_data,
@@ -1193,6 +1198,14 @@ static void __init gta02_machine_init(void)
 	//platform_add_devices(gta02_devices, ARRAY_SIZE(gta02_devices));
 }
 
+static void __init gta02_init_irq(void)
+{
+	s3c24xx_init_irq();
+
+/*	irq_reserve_irqs(1, 15);
+	irq_reserve_irqs(68, 2);*/
+};
+
 static struct map_desc gta02_iodesc[] __initdata = {
 	{
 		.virtual	= 0xe0000000,
@@ -1212,9 +1225,10 @@ static void __init gta02_map_io(void)
 MACHINE_START(NEO1973_GTA02, "GTA02")
 	/* Maintainer: Nelson Castillo <arhuaco@freaks-unidos.net> */
 	.atag_offset	= 0x100,
-	.map_io		= gta02_map_io,
-	.init_irq	= s3c24xx_init_irq,
+	.map_io			= gta02_map_io,
+	.init_irq		= gta02_init_irq,
+	.nr_irqs		= NR_IRQS + PCF50633_NUM_IRQS,
 	.init_machine	= gta02_machine_init,
-	.timer		= &s3c24xx_timer,
-	.restart	= s3c244x_restart,
+	.timer			= &s3c24xx_timer,
+	.restart		= s3c244x_restart,
 MACHINE_END
