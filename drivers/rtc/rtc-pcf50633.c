@@ -14,6 +14,8 @@
  *
  */
 
+#include <linux/mfd/pcf50633/core.h>
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -23,23 +25,6 @@
 #include <linux/rtc.h>
 #include <linux/bcd.h>
 #include <linux/err.h>
-
-#include <linux/mfd/pcf50633/core.h>
-
-#define PCF50633_REG_RTCSC	0x59 /* Second */
-#define PCF50633_REG_RTCMN	0x5a /* Minute */
-#define PCF50633_REG_RTCHR	0x5b /* Hour */
-#define PCF50633_REG_RTCWD	0x5c /* Weekday */
-#define PCF50633_REG_RTCDT	0x5d /* Day */
-#define PCF50633_REG_RTCMT	0x5e /* Month */
-#define PCF50633_REG_RTCYR	0x5f /* Year */
-#define PCF50633_REG_RTCSCA	0x60 /* Alarm Second */
-#define PCF50633_REG_RTCMNA	0x61 /* Alarm Minute */
-#define PCF50633_REG_RTCHRA	0x62 /* Alarm Hour */
-#define PCF50633_REG_RTCWDA	0x63 /* Alarm Weekday */
-#define PCF50633_REG_RTCDTA	0x64 /* Alarm Day */
-#define PCF50633_REG_RTCMTA	0x65 /* Alarm Month */
-#define PCF50633_REG_RTCYRA	0x66 /* Alarm Year */
 
 enum pcf50633_time_indexes {
 	PCF50633_TI_SEC,
@@ -57,13 +42,13 @@ struct pcf50633_time {
 };
 
 struct pcf50633_rtc {
-	int alarm_enabled;
-	int alarm_pending;
-	int irq_alarm;
-	int irq_second;
-
-	struct pcf50633 *pcf;
+	struct device *dev;
 	struct rtc_device *rtc_dev;
+
+	unsigned int irq_alarm;
+	unsigned int irq_second;
+	int alarm_enabled:1;
+	int alarm_pending:1;
 };
 
 static void pcf2rtc_time(struct rtc_time *rtc, struct pcf50633_time *pcf)
@@ -99,6 +84,7 @@ pcf50633_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 		disable_irq(rtc->irq_alarm);
 
 	rtc->alarm_enabled = enabled;
+	dev_info(dev, "alarm irq %s\n", enabled ? "enabled" : "disabled");
 
 	return 0;
 }
@@ -111,26 +97,18 @@ static int pcf50633_rtc_read_time(struct device *dev, struct rtc_time *tm)
 
 	rtc = dev_get_drvdata(dev);
 
-	ret = pcf50633_read_block(rtc->pcf, PCF50633_REG_RTCSC,
+	ret = pcf50633_read_block(child_to_pcf50633(rtc), PCF50633_REG_RTCSC,
 					    PCF50633_TI_EXTENT,
 					    &pcf_tm.time[0]);
-	if (ret != PCF50633_TI_EXTENT) {
+	if (ret != 0) {
 		dev_err(dev, "Failed to read time\n");
 		return -EIO;
 	}
 
-	dev_dbg(dev, "PCF_TIME: %02x.%02x.%02x %02x:%02x:%02x\n",
-		pcf_tm.time[PCF50633_TI_DAY],
-		pcf_tm.time[PCF50633_TI_MONTH],
-		pcf_tm.time[PCF50633_TI_YEAR],
-		pcf_tm.time[PCF50633_TI_HOUR],
-		pcf_tm.time[PCF50633_TI_MIN],
-		pcf_tm.time[PCF50633_TI_SEC]);
-
 	pcf2rtc_time(tm, &pcf_tm);
 
-	dev_dbg(dev, "RTC_TIME: %u.%u.%u %u:%u:%u\n",
-		tm->tm_mday, tm->tm_mon, tm->tm_year,
+	dev_dbg(dev, "get time %.2u.%.2u.%.4u %.2u:%.2u:%.2u\n",
+		tm->tm_mday, tm->tm_mon, tm->tm_year + 1900,
 		tm->tm_hour, tm->tm_min, tm->tm_sec);
 
 	return rtc_valid_tm(tm);
@@ -144,27 +122,19 @@ static int pcf50633_rtc_set_time(struct device *dev, struct rtc_time *tm)
 
 	rtc = dev_get_drvdata(dev);
 
-	dev_dbg(dev, "RTC_TIME: %u.%u.%u %u:%u:%u\n",
-		tm->tm_mday, tm->tm_mon, tm->tm_year,
-		tm->tm_hour, tm->tm_min, tm->tm_sec);
-
 	rtc2pcf_time(&pcf_tm, tm);
 
-	dev_dbg(dev, "PCF_TIME: %02x.%02x.%02x %02x:%02x:%02x\n",
-		pcf_tm.time[PCF50633_TI_DAY],
-		pcf_tm.time[PCF50633_TI_MONTH],
-		pcf_tm.time[PCF50633_TI_YEAR],
-		pcf_tm.time[PCF50633_TI_HOUR],
-		pcf_tm.time[PCF50633_TI_MIN],
-		pcf_tm.time[PCF50633_TI_SEC]);
+	dev_dbg(dev, "set time %.2u.%.2u.%.4u %.2u:%.2u:%.2u\n",
+		tm->tm_mday, tm->tm_mon, tm->tm_year + 1900,
+		tm->tm_hour, tm->tm_min, tm->tm_sec);
 
 
-	//alarm_masked = pcf50633_irq_mask_get(rtc->pcf, PCF50633_IRQ_ALARM);
+	//alarm_masked = pcf50633_irq_mask_get(child_to_pcf50633(rtc), PCF50633_IRQ_ALARM);
 	if (rtc->alarm_enabled)
 		disable_irq(rtc->irq_alarm);
 
 	/* Returns 0 on success */
-	ret = pcf50633_write_block(rtc->pcf, PCF50633_REG_RTCSC,
+	ret = pcf50633_write_block(child_to_pcf50633(rtc), PCF50633_REG_RTCSC,
 					     PCF50633_TI_EXTENT,
 					     &pcf_tm.time[0]);
 
@@ -185,16 +155,21 @@ static int pcf50633_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	alrm->enabled = rtc->alarm_enabled;
 	alrm->pending = rtc->alarm_pending;
 
-	ret = pcf50633_read_block(rtc->pcf, PCF50633_REG_RTCSCA,
+	ret = pcf50633_read_block(child_to_pcf50633(rtc), PCF50633_REG_RTCSCA,
 				PCF50633_TI_EXTENT, &pcf_tm.time[0]);
-	if (ret != PCF50633_TI_EXTENT) {
+	if (ret != 0) {
 		dev_err(dev, "Failed to read time\n");
 		return -EIO;
 	}
 
 	pcf2rtc_time(&alrm->time, &pcf_tm);
 
-	return rtc_valid_tm(&alrm->time);
+	ret = rtc_valid_tm(&alrm->time);
+	if (ret != 0) {
+		dev_err(dev, "Read invalid time\n");
+		return -EIO;
+	}
+	return 0;
 }
 
 static int pcf50633_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
@@ -210,14 +185,16 @@ static int pcf50633_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	/* do like mktime does and ignore tm_wday */
 	pcf_tm.time[PCF50633_TI_WKDAY] = 7;
 
-	// alarm_masked = pcf50633_irq_mask_get(rtc->pcf, PCF50633_IRQ_ALARM);
+	dev_dbg(dev, "set alarm %.2u.%.2u.%.4u %.2u:%.2u:%.2u\n",
+		alrm->time.tm_mday, alrm->time.tm_mon, alrm->time.tm_year + 1900,
+		alrm->time.tm_hour, alrm->time.tm_min, alrm->time.tm_sec);
 
 	/* disable alarm interrupt */
 	if (rtc->alarm_enabled)
 		disable_irq(rtc->irq_alarm);
 
 	/* Returns 0 on success */
-	ret = pcf50633_write_block(rtc->pcf, PCF50633_REG_RTCSCA,
+	ret = pcf50633_write_block(child_to_pcf50633(rtc), PCF50633_REG_RTCSCA,
 				PCF50633_TI_EXTENT, &pcf_tm.time[0]);
 	if (!alrm->enabled)
 		rtc->alarm_pending = 0;
@@ -229,7 +206,41 @@ static int pcf50633_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	return ret;
 }
 
+static int rtc_open(struct device *dev)
+{
+	struct pcf50633_rtc * rtc = dev_get_drvdata(dev);
+	//enable_irq(rtc->irq_second);
+
+	dev_dbg(dev, "OPEN\n");
+	return 0;
+}
+
+static void rtc_release(struct device *dev)
+{
+	struct pcf50633_rtc * rtc = dev_get_drvdata(dev);
+	//disable_irq(rtc->irq_second);	
+
+	dev_dbg(dev, "RELEASE\n");
+}
+
+static int rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
+{
+	dev_dbg(dev, "IOCTL  %u: %lu\n", cmd, arg);
+	return -ENOIOCTLCMD;
+}
+
+static int rtc_proc(struct device *dev, struct seq_file *file)
+{
+	dev_dbg(dev, "PROC\n");
+	return 0;
+}
+
 static struct rtc_class_ops pcf50633_rtc_ops = {
+	.open			= rtc_open,
+	.ioctl          = rtc_ioctl,
+	.release		= rtc_release,
+	.proc			= rtc_proc,
+	
 	.read_time		= pcf50633_rtc_read_time,
 	.set_time		= pcf50633_rtc_set_time,
 	.read_alarm		= pcf50633_rtc_read_alarm,
@@ -240,9 +251,15 @@ static struct rtc_class_ops pcf50633_rtc_ops = {
 static irqreturn_t pcf50633_rtc_irq(int irq, void *data)
 {
 	struct pcf50633_rtc *rtc = data;
+	dev_dbg(rtc->dev, "IRQ %d: %s\n", irq, (irq == rtc->irq_alarm) ? "alarm" : "second");
 
-	rtc_update_irq(rtc->rtc_dev, 1, RTC_AF | RTC_IRQF);
-	rtc->alarm_pending = 1;
+	if (irq == rtc->irq_alarm) {
+		rtc_update_irq(rtc->rtc_dev, 1, RTC_AF | RTC_IRQF);
+		rtc->alarm_pending = 1;
+	} else if (irq == rtc->irq_second) {
+		rtc_update_irq(rtc->rtc_dev, 1, RTC_PF | RTC_IRQF);
+	} else
+		return IRQ_NONE;
 
 	return IRQ_HANDLED;
 }
@@ -255,23 +272,23 @@ static int __devinit pcf50633_rtc_probe(struct platform_device *pdev)
 	rtc = kzalloc(sizeof(*rtc), GFP_KERNEL);
 	if (!rtc)
 		return -ENOMEM;
-	
+
+	rtc->irq_second = platform_get_irq_byname(pdev, "SECOND");
+	if (rtc->irq_second <= 0) {
+		ret = rtc->irq_second ?: -EINVAL;
+		dev_err(&pdev->dev, "Failed to get second irq: %d\n", ret);
+		goto err_free;
+	}
+
 	rtc->irq_alarm = platform_get_irq_byname(pdev, "ALARM");
-	rtc->irq_alarm = dev_to_pcf50633(pdev->dev.parent)->irq_base + PCF50633_IRQ_ALARM;
 	if (rtc->irq_alarm <= 0) {
 		ret = rtc->irq_alarm ?: -EINVAL;
 		dev_err(&pdev->dev, "Failed to get alarm irq: %d\n", ret);
 		goto err_free;
 	}
 
-	/*rtc->irq_second = platform_get_irq_byname(pdev, "SECOND");
-	if (rtc->irq_second <= 0) {
-		ret = rtc->irq_second ?: -EINVAL;
-		dev_err(&pdev->dev, "Failed to get second irq: %d\n", ret);
-		goto err_free;
-	}*/
 
-	rtc->pcf = dev_to_pcf50633(pdev->dev.parent);
+	rtc->dev = &pdev->dev;
 	platform_set_drvdata(pdev, rtc);
 	rtc->rtc_dev = rtc_device_register("pcf50633-rtc", &pdev->dev,
 				&pcf50633_rtc_ops, THIS_MODULE);
@@ -281,24 +298,27 @@ static int __devinit pcf50633_rtc_probe(struct platform_device *pdev)
 		goto err_free;
 	}
 
+	//disable_irq(rtc->irq_alarm);
+	rtc->alarm_enabled = 1;
 	ret = request_threaded_irq(rtc->irq_alarm, NULL, 
-                         pcf50633_rtc_irq, 0, "pcf50633-rtc alarm", rtc);
+                         pcf50633_rtc_irq, 0, "pcf50633-rtc:alarm", rtc);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to request alarm irq: %d\n", ret);
 		goto err_free;
 	}
 
-/*	ret = request_threaded_irq(rtc->irq_alarm, NULL, 
-                         pcf50633_rtc_irq, 0, "pcf50633-rtc second", rtc);
+	/*ret = request_threaded_irq(rtc->irq_second, NULL, 
+                         pcf50633_rtc_irq, 0, "pcf50633-rtc:second", rtc);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to request second irq: %d\n", ret);
 		goto err_free_irq_alarm;
-	}*/
-
+	}
+	disable_irq(rtc->irq_second);*/
+	
 	return 0;
 
-/* err_free_irq_alarm:
-	free_irq(rtc->irq_alarm, rtc); */
+err_free_irq_alarm:
+	free_irq(rtc->irq_alarm, rtc); 
 err_free:
 	kfree(rtc);
 	return ret;
@@ -311,7 +331,7 @@ static int __devexit pcf50633_rtc_remove(struct platform_device *pdev)
 	rtc = platform_get_drvdata(pdev);
 
 	free_irq(rtc->irq_alarm, rtc);
-	/* free_irq(rtc->irq_second, rtc); */
+	//free_irq(rtc->irq_second, rtc);
 
 	rtc_device_unregister(rtc->rtc_dev);
 	kfree(rtc);
