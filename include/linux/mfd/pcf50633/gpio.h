@@ -15,11 +15,6 @@
 
 #include <linux/mfd/pcf50633/core.h>
 
-#define PCF50633_GPIO1		0
-#define PCF50633_GPIO2		1
-#define PCF50633_GPIO3		2
-#define PCF50633_GPO		3
-
 #define PCF50633_REG_GPIOCFG(x) (0x14 + (x))
 
 enum pcf50633_gpio_config {
@@ -45,15 +40,9 @@ enum pcf50633_gpio_config {
 	PCF50633_GPO_CONFIG_INVERT	= 0x8,
 };
 
-int pcf50633_gpio_set_config(struct pcf50633 *pcf, unsigned gpio,
-                              enum pcf50633_gpio_config config);
 
-int pcf50633_gpio_power_supply_set(struct pcf50633 *pcf,
-					int gpio, int regulator, int on);
-
-
-/*u8 pcf50633_gpio_get(struct pcf50633 *pcf, int gpio);
-int pcf50633_gpio_set(struct pcf50633 *pcf, int gpio, u8 val);*/
+u8 pcf50633_gpio_get(struct pcf50633 *pcf, int gpio);
+int pcf50633_gpio_set(struct pcf50633 *pcf, int gpio, u8 val);
 
 
 #endif /* __LINUX_MFD_PCF50633_GPIO_H */

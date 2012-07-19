@@ -16,65 +16,49 @@
  *  you can do only one measurement per read request.
  */
 
+#include <linux/mfd/pcf50633/core.h>
+#include <linux/mfd/pcf50633/adc.h>
+
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/device.h>
-#include <linux/platform_device.h>
-#include <linux/completion.h>
 #include <linux/interrupt.h>
-
-#include <linux/mfd/pcf50633/core.h>
-#include <linux/mfd/pcf50633/adc.h>
 
 struct pcf50633_adc_sync_request {
 	int result;
 	struct completion completion;
 };
 
-
-static inline struct pcf50633_adc *__to_adc(struct pcf50633 *pcf)
+static void adc_setup(struct pcf50633 *pcf, struct pcf50633_adc_channel *c)
 {
-	return pcf->adc;
-}
-
-static inline struct pcf50633 * __to_pcf(struct pcf50633_adc *adc)
-{
-	return dev_to_pcf50633(adc->dev->parent);
-}
-
-
-static void adc_setup(struct pcf50633 *pcf, int channel, int avg)
-{
-	channel &= PCF50633_ADCC1_ADCMUX_MASK;
-
 	/* kill ratiometric, but enable ACCSW biasing */
-	pcf50633_reg_write(pcf, PCF50633_REG_ADCC2, 0x00);
-	pcf50633_reg_write(pcf, PCF50633_REG_ADCC3, 0x01);
+	dev_dbg(pcf->adc->dev, "adc_setup %#.2x %#.2x %#.2x\n",
+	        c->c1flags | PCF50633_ADCC1_ADCSTART,
+	        c->c2flags, c->c3flags);
+	pcf50633_reg_write(pcf, PCF50633_REG_ADCC2, c->c2flags);
+	pcf50633_reg_write(pcf, PCF50633_REG_ADCC3, c->c3flags);
 
 	/* start ADC conversion on selected channel */
-	pcf50633_reg_write(pcf, PCF50633_REG_ADCC1, channel | avg |
-		    PCF50633_ADCC1_ADCSTART | PCF50633_ADCC1_RES_10BIT);
+	pcf50633_reg_write(pcf, PCF50633_REG_ADCC1, (c->c1flags & 0x7f) | 0x01);
+	//                   (channel & PCF50633_ADCC1_ADCMUX_MASK) | avg |
+	//                   PCF50633_ADCC1_ADCSTART | PCF50633_ADCC1_RES_10BIT);
 }
 
-static void trigger_next_adc_job_if_any(struct pcf50633 *pcf)
+static void trigger_next_adc_job_if_any(struct pcf50633_adc *adc)
 {
-	struct pcf50633_adc *adc = __to_adc(pcf);
 	int head;
 
 	head = adc->queue_head;
-
 	if (!adc->queue[head])
 		return;
 
-	adc_setup(pcf, adc->queue[head]->mux, adc->queue[head]->avg);
+	adc_setup(child_to_pcf50633(adc), adc->channels + adc->queue[head]->channel);
 }
 
 static int
-adc_enqueue_request(struct pcf50633 *pcf, struct pcf50633_adc_request *req)
+adc_enqueue_request(struct pcf50633_adc *adc, struct pcf50633_adc_request *req)
 {
-	struct pcf50633_adc *adc = __to_adc(pcf);
 	int head, tail;
 
 	mutex_lock(&adc->queue_mutex);
@@ -84,13 +68,13 @@ adc_enqueue_request(struct pcf50633 *pcf, struct pcf50633_adc_request *req)
 
 	if (adc->queue[tail]) {
 		mutex_unlock(&adc->queue_mutex);
-		dev_err(pcf->dev, "ADC queue is full, dropping request\n");
+		dev_err(adc->dev, "ADC queue is full, dropping request\n");
 		return -EBUSY;
 	}
 
 	adc->queue[tail] = req;
 	if (head == tail)
-		trigger_next_adc_job_if_any(pcf);
+		trigger_next_adc_job_if_any(adc);
 	adc->queue_tail = (tail + 1) & (PCF50633_MAX_ADC_FIFO_DEPTH - 1);
 
 	mutex_unlock(&adc->queue_mutex);
@@ -107,15 +91,15 @@ static void pcf50633_adc_sync_read_callback(struct pcf50633 *pcf, void *param,
 	complete(&req->completion);
 }
 
-int pcf50633_adc_sync_read(struct pcf50633 *pcf, int mux, int avg)
+int pcf50633_adc_sync_read(struct pcf50633 *pcf, int channel)
 {
 	struct pcf50633_adc_sync_request req;
 	int ret;
 
 	init_completion(&req.completion);
 
-	ret = pcf50633_adc_async_read(pcf, mux, avg,
-		pcf50633_adc_sync_read_callback, &req);
+	ret = pcf50633_adc_async_read(pcf, channel,
+		                          pcf50633_adc_sync_read_callback, &req);
 	if (ret)
 		return ret;
 
@@ -125,28 +109,31 @@ int pcf50633_adc_sync_read(struct pcf50633 *pcf, int mux, int avg)
 }
 EXPORT_SYMBOL_GPL(pcf50633_adc_sync_read);
 
-int pcf50633_adc_async_read(struct pcf50633 *pcf, int mux, int avg,
+int pcf50633_adc_async_read(struct pcf50633 *pcf, int channel,
 			     void (*callback)(struct pcf50633 *, void *, int),
 			     void *callback_param)
 {
 	struct pcf50633_adc_request *req;
+
+	if (!(pcf->adc->channel_mask & (1 << channel)))
+		return -EINVAL;
 
 	/* req is freed when the result is ready, in interrupt handler */
 	req = kmalloc(sizeof(*req), GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 
-	req->mux = mux;
-	req->avg = avg;
+	req->channel = channel;
 	req->callback = callback;
 	req->callback_param = callback_param;
 
-	return adc_enqueue_request(pcf, req);
+	return adc_enqueue_request(pcf->adc, req);
 }
 EXPORT_SYMBOL_GPL(pcf50633_adc_async_read);
 
-static int adc_result(struct pcf50633 *pcf)
+static int adc_result(struct pcf50633_adc *adc)
 {
+	struct pcf50633 *pcf = child_to_pcf50633(adc);
 	u8 adcs1, adcs3;
 	u16 result;
 
@@ -154,15 +141,93 @@ static int adc_result(struct pcf50633 *pcf)
 	adcs3 = pcf50633_reg_read(pcf, PCF50633_REG_ADCS3);
 	result = (adcs1 << 2) | (adcs3 & PCF50633_ADCS3_ADCDAT1L_MASK);
 
-	dev_dbg(pcf->dev, "adc result = %d\n", result);
+	dev_dbg(adc->dev, "adc result = %d wrt %d\n", result, (adcs3 & 0x70) >> 4);
 
 	return result;
 }
 
+static ssize_t pcf50633_adc_attr_show(struct device *dev,
+                         struct device_attribute *attr, char *buf);
+
+static DEVICE_ATTR(adcin1, S_IRUGO, pcf50633_adc_attr_show, NULL);
+static DEVICE_ATTR(adcin2, S_IRUGO, pcf50633_adc_attr_show, NULL);
+static DEVICE_ATTR(battemp, S_IRUGO, pcf50633_adc_attr_show, NULL);
+static DEVICE_ATTR(batsns, S_IRUGO, pcf50633_adc_attr_show, NULL);
+
+static ssize_t pcf50633_adc_attr_show(struct device *dev,
+                         struct device_attribute *attr, char *buf)
+{
+	struct pcf50633_adc *adc = dev_get_drvdata(dev);
+	int i, maxval, result, whole, frac;
+
+	if (attr == &dev_attr_adcin1)
+		i = 0;
+	else if (attr == &dev_attr_adcin2)
+		i = 1;
+	else if (attr == &dev_attr_battemp)
+		i = 2;
+	else if (attr == &dev_attr_batsns)
+		i = 3;
+	else
+		return -EINVAL;
+	
+	maxval = (adc->channels[i].c1flags & PCF50633_ADCC1_RES_8BIT) ? 255 : 1023;
+
+	result = pcf50633_adc_sync_read(child_to_pcf50633(adc), i);
+	if (result < 0)
+		return result;
+	
+	if (adc->channels[i].m) {
+		result = result * adc->channels[i].m + adc->channels[i].b;
+		whole =  result / maxval;
+		frac = result * 1000 / maxval - (whole * 1000);
+	} else {
+		whole = 0;
+		frac = result * 1000 / maxval;
+	}
+	return snprintf(buf, PAGE_SIZE, "%.1d.%.3d\n", whole, frac);
+}
+
+static umode_t pcf50633_adc_sysfs_attr_is_visible(struct kobject * kobj,
+                           struct attribute * attr, int index)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct pcf50633_adc * adc = dev_get_drvdata(dev);
+	int i;
+	
+	if (attr == &dev_attr_adcin1.attr)
+		i = 0;
+	else if (attr == &dev_attr_adcin2.attr)
+		i = 1;
+	else if (attr == &dev_attr_battemp.attr)
+		i = 2;
+	else if (attr == &dev_attr_batsns.attr)
+		i = 3;
+	else
+		return 0;
+
+	if (adc->channel_mask & (1 << i))
+		return attr->mode ?: 0444;
+
+	return 0;
+}
+
+static struct attribute_group adc_attr_group = {
+	.name		= NULL,      /* put in device directory */
+	.is_visible	= pcf50633_adc_sysfs_attr_is_visible,
+	.attrs		= (struct attribute *[]) {
+		&dev_attr_adcin1.attr,
+		&dev_attr_adcin2.attr,
+		&dev_attr_battemp.attr,
+		&dev_attr_batsns.attr,
+		NULL,
+	},
+};
+
 static irqreturn_t pcf50633_adc_irq(int irq, void *data)
 {
 	struct pcf50633_adc *adc = data;
-	struct pcf50633 *pcf = __to_pcf(adc);
+	struct pcf50633 *pcf = child_to_pcf50633(adc);
 	struct pcf50633_adc_request *req;
 	int head, res;
 
@@ -171,7 +236,7 @@ static irqreturn_t pcf50633_adc_irq(int irq, void *data)
 
 	req = adc->queue[head];
 	if (WARN_ON(!req)) {
-		dev_err(pcf->dev, "pcf50633-adc irq: ADC queue empty!\n");
+		dev_err(adc->dev, "pcf50633-adc irq: ADC queue empty!\n");
 		mutex_unlock(&adc->queue_mutex);
 		return IRQ_HANDLED;
 	}
@@ -179,8 +244,8 @@ static irqreturn_t pcf50633_adc_irq(int irq, void *data)
 	adc->queue_head = (head + 1) &
 				      (PCF50633_MAX_ADC_FIFO_DEPTH - 1);
 
-	res = adc_result(pcf);
-	trigger_next_adc_job_if_any(pcf);
+	res = adc_result(adc);
+	trigger_next_adc_job_if_any(adc);
 
 	mutex_unlock(&adc->queue_mutex);
 
@@ -193,6 +258,7 @@ static irqreturn_t pcf50633_adc_irq(int irq, void *data)
 static int __devinit pcf50633_adc_probe(struct platform_device *pdev)
 {
 	struct pcf50633_adc *adc;
+	struct pcf50633_adc_platform_data *pdata;
 	int ret;
 
 	adc = kzalloc(sizeof(*adc), GFP_KERNEL);
@@ -201,8 +267,13 @@ static int __devinit pcf50633_adc_probe(struct platform_device *pdev)
 
 	adc->dev = &pdev->dev;
 	platform_set_drvdata(pdev, adc);
-	adc->async_read = pcf50633_adc_async_read;
-	adc->sync_read = pcf50633_adc_sync_read;
+
+	pdata = pdev->dev.platform_data;
+	if (pdata) {
+		adc->channel_mask = pdata->channel_mask;
+		memcpy(adc->channels, pdata->channels,
+		       sizeof(struct pcf50633_adc_channel) * 4);
+	}
 
 	adc->irq = platform_get_irq(pdev, 0);
 	if (adc->irq <= 0) {
@@ -216,10 +287,16 @@ static int __devinit pcf50633_adc_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to request irq: %d\n", ret);
 		goto err_free;
+	} else {
+		dev_dbg(&pdev->dev, "Acquired irq %u\n", adc->irq) ;
 	}
 
 	mutex_init(&adc->queue_mutex);
-	__to_pcf(adc)->adc = adc;
+	child_to_pcf50633(adc)->adc = adc;
+
+	ret = sysfs_create_group(&pdev->dev.kobj, &adc_attr_group);
+	if (ret)
+		dev_err(&pdev->dev, "failed to create sysfs entries\n");
 
 	return 0;
 
@@ -233,6 +310,7 @@ static int __devexit pcf50633_adc_remove(struct platform_device *pdev)
 	struct pcf50633_adc *adc = platform_get_drvdata(pdev);
 	int i, head;
 
+	sysfs_remove_group(&pdev->dev.kobj, &adc_attr_group);
 	free_irq(adc->irq, adc);
 
 	mutex_lock(&adc->queue_mutex);
@@ -247,8 +325,9 @@ static int __devexit pcf50633_adc_remove(struct platform_device *pdev)
 
 	mutex_unlock(&adc->queue_mutex);
 	
-	__to_pcf(adc)->adc = NULL;
+	child_to_pcf50633(adc)->adc = NULL;
 	platform_set_drvdata(pdev, NULL);
+
 	kfree(adc);
 
 	return 0;

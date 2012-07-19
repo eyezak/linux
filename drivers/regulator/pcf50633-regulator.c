@@ -14,6 +14,9 @@
  *
  */
 
+#include <linux/mfd/pcf50633/core.h>
+#include <linux/mfd/pcf50633/pmic.h>
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -21,8 +24,21 @@
 #include <linux/err.h>
 #include <linux/platform_device.h>
 
-#include <linux/mfd/pcf50633/core.h>
-#include <linux/mfd/pcf50633/pmic.h>
+enum pcf50633_regulator_enable {
+	PCF50633_REGULATOR_ON		= 0x01,
+	PCF50633_REGULATOR_ON_GPIO1	= 0x02,
+	PCF50633_REGULATOR_ON_GPIO2	= 0x04,
+	PCF50633_REGULATOR_ON_GPIO3	= 0x08,
+};
+#define PCF50633_REGULATOR_ON_MASK	0x0f
+
+enum pcf50633_regulator_phase {
+	PCF50633_REGULATOR_ACTPH1	= 0x00,
+	PCF50633_REGULATOR_ACTPH2	= 0x10,
+	PCF50633_REGULATOR_ACTPH3	= 0x20,
+	PCF50633_REGULATOR_ACTPH4	= 0x30,
+};
+#define PCF50633_REGULATOR_ACTPH_MASK	0x30
 
 #define PCF50633_REGULATOR(_name, _id, _n) 		\
 	{					\
@@ -332,9 +348,6 @@ static int __devinit pcf50633_regulator_probe(struct platform_device *pdev)
 		return PTR_ERR(rdev);
 
 	platform_set_drvdata(pdev, rdev);
-
-	if (pcf->pdata->regulator_registered)
-		pcf->pdata->regulator_registered(&pdev->dev, pdev->id);
 
 	return 0;
 }

@@ -13,6 +13,9 @@
  *
  */
 
+#include <linux/mfd/pcf50633/core.h>
+#include <linux/mfd/pcf50633/backlight.h>
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -20,9 +23,6 @@
 
 #include <linux/backlight.h>
 #include <linux/fb.h>
-
-#include <linux/mfd/pcf50633/core.h>
-#include <linux/mfd/pcf50633/backlight.h>
 
 struct pcf50633_bl {
 	struct device *dev;
@@ -64,29 +64,22 @@ static int pcf50633_bl_update_status(struct backlight_device *bl)
 {
 	struct pcf50633_bl *pcf_bl = bl_get_data(bl);
 	struct pcf50633 *pcf = __to_pcf(pcf_bl);
-	unsigned int new_brightness;
+	unsigned int enable;
 
 	if (bl->props.state & (BL_CORE_SUSPENDED | BL_CORE_FBBLANK) ||
 		bl->props.power != FB_BLANK_UNBLANK)
-		new_brightness = 0;
-	else if (bl->props.brightness > pcf_bl->brightness_limit)
-		new_brightness = pcf_bl->brightness_limit;
-	else 
-		new_brightness = bl->props.brightness;
+		enable = 0;
+	else
+		enable = 1;
+	
+	if (bl->props.brightness > pcf_bl->brightness_limit)
+		bl->props.brightness = pcf_bl->brightness_limit;
 
-
-	if (pcf_bl->brightness == new_brightness)
-		return 0;
-
-	if (new_brightness) {
-		pcf50633_reg_write(pcf, PCF50633_REG_LEDOUT,
-					new_brightness);
-		if (!pcf_bl->brightness)
-			pcf50633_reg_write(pcf, PCF50633_REG_LEDENA, 1);
-	} else {
-		pcf50633_reg_write(pcf, PCF50633_REG_LEDENA, 0);
-	}
-	pcf_bl->brightness = new_brightness;
+	if (enable)
+		pcf50633_reg_write(pcf, PCF50633_REG_LEDOUT, bl->props.brightness);
+	pcf50633_reg_write(pcf, PCF50633_REG_LEDENA, enable);
+	if (!enable)
+		pcf50633_reg_write(pcf, PCF50633_REG_LEDOUT, bl->props.brightness);
 
 	return 0;
 }
@@ -105,8 +98,7 @@ static const struct backlight_ops pcf50633_bl_ops = {
 
 static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 {
-	struct pcf50633_platform_data *pcf50633_data = pdev->dev.parent->platform_data;
-	struct pcf50633_bl_platform_data *pdata = pcf50633_data->backlight_data;
+	struct pcf50633_bl_platform_data *pdata = pdev->dev.platform_data;
 	struct pcf50633_bl *pcf_bl;
 	struct pcf50633 *pcf;
 	struct backlight_properties props;
@@ -123,6 +115,7 @@ static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 	memset(&props, 0, sizeof(struct backlight_properties));
 	props.type = BACKLIGHT_RAW;
 	props.max_brightness = 0x3f;
+	props.brightness = pdata->default_brightness;
 	pcf_bl->bl = backlight_device_register(pdev->name, &pdev->dev, pcf_bl,
 						&pcf50633_bl_ops, &props);
 
@@ -132,12 +125,12 @@ static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, pcf_bl);
-
+	
+	/*	disable output and set brightness, ramp_time	*/
+	pcf50633_reg_write(pcf, PCF50633_REG_LEDENA, 0);
+	pcf50633_reg_write(pcf, PCF50633_REG_LEDOUT, pcf_bl->bl->props.brightness);
 	pcf50633_reg_write(pcf, PCF50633_REG_LEDDIM, pdata->ramp_time);
 
-	/* Should be different from props.brightness, so we do not exit
-	 * update_status early the first time it's called */
-	pcf_bl->bl->props.brightness = pdata->default_brightness;
 	pcf_bl->bl->props.power = FB_BLANK_UNBLANK;
 	backlight_update_status(pcf_bl->bl);
 
@@ -148,9 +141,7 @@ static int __devexit pcf50633_bl_remove(struct platform_device *pdev)
 {
 	struct pcf50633_bl *pcf_bl = platform_get_drvdata(pdev);
 
-	pcf_bl->bl->props.power = 0;
-	pcf_bl->bl->props.brightness = 0;
-	backlight_update_status(pcf_bl->bl);
+	pcf50633_reg_write(child_to_pcf50633(pcf_bl), PCF50633_REG_LEDENA, 0);
 
 	__to_pcf(pcf_bl)->bl = NULL;
 	backlight_device_unregister(pcf_bl->bl);
