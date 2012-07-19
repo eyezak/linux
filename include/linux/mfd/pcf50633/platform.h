@@ -16,13 +16,16 @@
 
 #include <linux/mfd/pcf50633/regs.h>
 
-
 #define PCF50633_NUM_REGULATORS	11
+
+#define PCF50633_NUM_INT_REGS 5
+#define PCF50633_NUM_IRQS  (PCF50633_NUM_INT_REGS * 8)
 
 #define PCF50633_GPIO1		0
 #define PCF50633_GPIO2		1
 #define PCF50633_GPIO3		2
 #define PCF50633_GPO		3
+#define PCF50633_NUM_GPIO	4
 
 /*
 * @default_brightness: Backlight brightness is initialized to this value
@@ -103,7 +106,7 @@ struct pcf50633_ops {
 
 struct pcf50633_bl_ops {
 	int (* set_power)(struct pcf50633_bl_ops *, unsigned int);
-	int (* set_brightness_limit)(struct pcf50633_bl_ops *, unsigned int);
+	int (* set_brightness)(struct pcf50633_bl_ops *, unsigned int);
 };
 
 

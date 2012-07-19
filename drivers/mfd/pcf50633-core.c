@@ -90,6 +90,15 @@ int pcf50633_reg_clear_bits(struct pcf50633 *pcf, unsigned int reg, unsigned int
 }
 EXPORT_SYMBOL_GPL(pcf50633_reg_clear_bits);
 
+
+static void pcf50633_ooc_shutdown(struct pcf50633_ops *ops)
+{
+	struct pcf50633 * pcf = container_of(ops, struct pcf50633, ops);
+	
+	pcf50633_reg_set_bit_mask(pcf, PCF50633_REG_OOCSHDWN, 0x01, 0x01);
+}
+
+
 /* sysfs attributes */
 static ssize_t show_dump_regs(struct device *dev, struct device_attribute *attr,
 			    char *buf)
@@ -196,9 +205,9 @@ static int pcf50633_resume(struct device *dev)
 
 	return 0;
 }
+static SIMPLE_DEV_PM_OPS(pcf50633_pm, pcf50633_suspend, pcf50633_resume);
 #endif
 
-static SIMPLE_DEV_PM_OPS(pcf50633_pm, pcf50633_suspend, pcf50633_resume);
 
 static bool pcf50633_reg_readable(struct device *dev, unsigned int reg)
 {
@@ -356,7 +365,7 @@ static struct regmap_irq pcf50633_irqs[] = {
 };
 
 static struct regmap_irq_chip pcf50633_regmap_irq_chip = {
-	.name = "pcf50633-irq",
+	.name = "pcf50633:irqchip",
 	.status_base = PCF50633_REG_INT1,
 	.mask_base = PCF50633_REG_INT1M,
 	.num_regs = PCF50633_NUM_INT_REGS,
@@ -472,6 +481,7 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 
 	i2c_set_clientdata(client, pcf);
 	pcf->dev = &client->dev;
+	pcf->ops.shutdown = pcf50633_ooc_shutdown;
 
 	regmap_read(pcf->regmap, PCF50633_REG_VERSION, &version);
 	regmap_read(pcf->regmap, PCF50633_REG_VARIANT, &variant);
@@ -480,9 +490,11 @@ static int __devinit pcf50633_probe(struct i2c_client *client,
 		ret = -ENODEV;
 		goto err_regmap;
 	}
-
 	dev_info(pcf->dev, "Probed device version %d variant %d\n",
 							version, variant);
+	
+	
+	//pcf50633_reg_set_bit_mask(pcf, PCF50633_REG_DOWN1ENA, 0x0e, 0x02);
 
 	pcf->irq = client->irq;
 	pcf->irq_base = pcf->pdata->irq_base ?: -1;
@@ -540,12 +552,15 @@ static int __devexit pcf50633_remove(struct i2c_client *client)
 {
 	struct pcf50633 *pcf = i2c_get_clientdata(client);
 
+	regmap_del_irq_chip(pcf->irq, pcf->irq_data);
+
 	sysfs_remove_group(&client->dev.kobj, &pcf_attr_group);
 
 	mfd_remove_devices(pcf->dev);
-
-	regmap_del_irq_chip(pcf->irq, pcf->irq_data);
+	
 	regmap_exit(pcf->regmap);
+	
+	i2c_set_clientdata(client, NULL);
 	
 	kfree(pcf);
 
@@ -561,7 +576,9 @@ MODULE_DEVICE_TABLE(i2c, pcf50633_id_table);
 static struct i2c_driver pcf50633_driver = {
 	.driver = {
 		.name	= "pcf50633",
+#ifdef CONFIG_PM_SLEEP
 		.pm	= &pcf50633_pm,
+#endif
 	},
 	.id_table = pcf50633_id_table,
 	.probe = pcf50633_probe,

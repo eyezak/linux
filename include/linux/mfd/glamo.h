@@ -23,6 +23,8 @@ struct glamo_platform_data {
 	struct glamo_gpio_platform_data	*gpio_data;
 
 	unsigned int osci_clock_rate;
+	int gpio_3dreset;
+	int irq_base;
 
 	void (*glamo_external_reset)(int);
 };

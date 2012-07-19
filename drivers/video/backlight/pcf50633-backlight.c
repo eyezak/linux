@@ -25,6 +25,8 @@
 #include <linux/fb.h>
 
 struct pcf50633_bl {
+	struct pcf50633_bl_ops ops;
+
 	struct device *dev;
 	struct backlight_device *bl;
 
@@ -81,7 +83,19 @@ static int pcf50633_bl_update_status(struct backlight_device *bl)
 	if (!enable)
 		pcf50633_reg_write(pcf, PCF50633_REG_LEDOUT, bl->props.brightness);
 
+	dev_dbg(pcf_bl->dev, "update status %s at %d%%\n",
+	        (enable) ? "enabled" : "disabled",
+	        bl->props.brightness * 100 / pcf_bl->brightness_limit);
+
 	return 0;
+}
+
+static int pcf50633_bl_ops_set_power(struct pcf50633_bl_ops *ops, unsigned int power)
+{
+	struct pcf50633_bl *pcf_bl = container_of(ops, struct pcf50633_bl, ops);
+
+	pcf_bl->bl->props.power = power;
+	return pcf50633_bl_update_status(pcf_bl->bl);
 }
 
 static int pcf50633_bl_get_brightness(struct backlight_device *bl)
@@ -111,6 +125,7 @@ static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 	pcf = __to_pcf(pcf_bl);
 	pcf->bl = pcf_bl;
 	pcf_bl->brightness_limit = pdata->default_brightness_limit;
+	pcf_bl->ops.set_power = pcf50633_bl_ops_set_power;
 
 	memset(&props, 0, sizeof(struct backlight_properties));
 	props.type = BACKLIGHT_RAW;
@@ -131,8 +146,8 @@ static int __devinit pcf50633_bl_probe(struct platform_device *pdev)
 	pcf50633_reg_write(pcf, PCF50633_REG_LEDOUT, pcf_bl->bl->props.brightness);
 	pcf50633_reg_write(pcf, PCF50633_REG_LEDDIM, pdata->ramp_time);
 
-	pcf_bl->bl->props.power = FB_BLANK_UNBLANK;
-	backlight_update_status(pcf_bl->bl);
+	//pcf_bl->bl->props.power = FB_BLANK_UNBLANK;
+	//backlight_update_status(pcf_bl->bl);
 
 	return 0;
 }

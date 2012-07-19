@@ -208,7 +208,7 @@ static int pcf50633_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 
 static int rtc_open(struct device *dev)
 {
-	struct pcf50633_rtc * rtc = dev_get_drvdata(dev);
+	//struct pcf50633_rtc * rtc = dev_get_drvdata(dev);
 	//enable_irq(rtc->irq_second);
 
 	dev_dbg(dev, "OPEN\n");
@@ -217,7 +217,7 @@ static int rtc_open(struct device *dev)
 
 static void rtc_release(struct device *dev)
 {
-	struct pcf50633_rtc * rtc = dev_get_drvdata(dev);
+	//struct pcf50633_rtc * rtc = dev_get_drvdata(dev);
 	//disable_irq(rtc->irq_second);	
 
 	dev_dbg(dev, "RELEASE\n");
@@ -317,8 +317,8 @@ static int __devinit pcf50633_rtc_probe(struct platform_device *pdev)
 	
 	return 0;
 
-err_free_irq_alarm:
-	free_irq(rtc->irq_alarm, rtc); 
+/*err_free_irq_alarm:
+	free_irq(rtc->irq_alarm, rtc); */
 err_free:
 	kfree(rtc);
 	return ret;

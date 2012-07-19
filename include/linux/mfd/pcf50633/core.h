@@ -29,11 +29,6 @@
 
 struct pcf50633;
 
-#define PCF50633_NUM_REGULATORS	11
-
-#define PCF50633_NUM_INT_REGS 5
-#define PCF50633_NUM_IRQS  (PCF50633_NUM_INT_REGS * 8)
-
 enum {
 	/* Chip IRQs */
 	/* regmap_irq_chip uses legacy irq domain ?? */
