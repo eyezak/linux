@@ -996,12 +996,14 @@ static int __devinit glamo_probe(struct platform_device *pdev)
 		goto err_free;
 	}
 
-	irq_base = irq_alloc_descs(-1, 0, GLAMO_NR_IRQS, 0);
+	irq_base = irq_alloc_descs(glamo->pdata->irq_base, 0, GLAMO_NR_IRQS, 0);
 	if (irq_base < 0) {
 		dev_err(&pdev->dev, "Failed to allocate irqs: %d\n", irq_base);
 		goto err_free;
 	}
 	glamo->irq_base = irq_base;
+	dev_notice(&pdev->dev, "Allocated irqs from %d to %d\n", glamo->irq_base,
+	           glamo->irq_base + GLAMO_NR_IRQS - 1);
 
 
 	/* only request the generic, hostbus and memory controller registers */
@@ -1040,18 +1042,19 @@ static int __devinit glamo_probe(struct platform_device *pdev)
 	 * finally set the mfd interrupts up
 	 */
 	for (irq = irq_base; irq < irq_base + GLAMO_NR_IRQS; ++irq) {
+		irq_set_chip_data(irq, glamo);
+		irq_set_chip(irq, &glamo_irq_chip);
+		__irq_set_handler(irq, handle_level_irq, 0, NULL);
+
 #ifdef CONFIG_ARM
 		_set_irq_flags(irq, IRQF_VALID);
 #else
 		irq_set_noprobe(irq);
 #endif
-		irq_set_chip_data(irq, glamo);
-		irq_set_chip(irq, &glamo_irq_chip);
-		__irq_set_handler(irq, handle_level_irq, 0, NULL);
 	}
 
 	ret = request_any_context_irq(glamo->irq, glamo_irq_handler,
-				IRQF_TRIGGER_FALLING, "glamo irq demux", glamo);
+				IRQF_TRIGGER_FALLING, "glamo3362:irqchip", glamo);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to request irq: %d\n", ret);
 		goto err_free_irqs;

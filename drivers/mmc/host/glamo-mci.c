@@ -597,10 +597,10 @@ static void glamo_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	int ret;
 
 	//mmc_host_enable(mmc); mmc_try_claim_host
-	if (__mmc_claim_host(mmc, NULL) != 0) {
+	/*if (__mmc_claim_host(mmc, NULL) != 0) {
 		dev_err(&host->pdev->dev, "Failed to claim mmc host\n");
 		return;
-	}
+	}*/
 
 	/* Set power */
 	glamo_mci_set_power_mode(host, ios->power_mode);
@@ -639,7 +639,8 @@ static void glamo_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 				GLAMO_BASIC_MMC_EN_4BIT_DATA | 0xc0,
 						   bus_width | sd_drive << 6);
 
-	mmc_release_host(mmc);
+	udelay(1);
+	//mmc_release_host(mmc);
 	/*if (host->power_mode == MMC_POWER_OFF)
 		mmc_host_disable(host->mmc);
 	else
@@ -772,10 +773,10 @@ static int __devinit glamo_mci_probe(struct platform_device *pdev)
 		goto probe_free_mem_region_data;
 	}
 
-	ret = request_threaded_irq(host->irq, NULL, glamo_mci_irq, IRQF_SHARED,
+	ret = request_threaded_irq(host->irq, NULL, glamo_mci_irq, IRQF_SHARED | IRQF_ONESHOT,
 				   pdev->name, host);
 	if (ret) {
-		dev_err(&pdev->dev, "failed to register irq.\n");
+		dev_err(&pdev->dev, "failed to register irq %d.\n", host->irq);
 		goto probe_iounmap_data;
 	}
 

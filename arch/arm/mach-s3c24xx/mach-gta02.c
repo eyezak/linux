@@ -114,8 +114,13 @@
 
 #define GTA02_CHARGER_CONFIGURE_TIMEOUT ((3000 * HZ) / 1000)
 
+#define GTA02_PCF50633_IRQ_BASE	(IRQ_S3C2440_AC97 + 1)
+#define GTA02_GLAMO_IRQ_BASE	(GTA02_PCF50633_IRQ_BASE + PCF50633_NUM_IRQS)
+
+
 static struct pcf50633_ops *gta02_pcf_ops;
-static struct pcf50633_mbc_ops *gta02_pcf_mbc;
+static struct pcf50633_mbc_ops *gta02_pcf_mbc_ops;
+static struct pcf50633_bl_ops *gta02_pcf_bl_ops;
 static struct pcf50633_platform_data gta02_pcf_pdata;
 
 /*	UARTs  */
@@ -230,10 +235,10 @@ static struct s3c2410_platform_nand __initdata gta02_nand_info = {
 static void gta02_udc_vbus_draw(unsigned int ma)
 {
 	printk("mach-gta02: vbus draw %u mA\n", ma);
-	if (!gta02_pcf_mbc)
+	if (!gta02_pcf_mbc_ops)
 		return;
 
-	gta02_pcf_mbc->vbus_draw(gta02_pcf_mbc, ma);
+	gta02_pcf_mbc_ops->vbus_draw(gta02_pcf_mbc_ops, ma);
 }
 static void gta02_udc_command(enum s3c2410_udc_cmd_e cmd)
 {
@@ -637,6 +642,8 @@ static struct glamo_platform_data gta02_glamo_pdata = {
 	.gpio_data  = &gta02_glamo_gpio_pdata,
 
 	.osci_clock_rate = 32768,
+	.gpio_3dreset = GTA02_GPIO_3D_RESET,
+	.irq_base = GTA02_GLAMO_IRQ_BASE,
 
 	.glamo_external_reset = gta02_glamo_external_reset,
 };
@@ -810,25 +817,34 @@ static struct platform_device bq27000_battery_device = {
 /*
 static int gta02_get_charger_online_status(void)
 {
-	struct pcf50633 *pcf = gta02_pcf_ops;
+	struct pcf50633_mbc_ops *mbc = gta02_pcf_mbc_ops;
 
-	return pcf->mbc->get_status(pcf->mbc) & PCF50633_MBC_USB_ONLINE;
+	return mbc->get_status(mbc) & PCF50633_MBC_USB_ONLINE;
 }
 
 static int gta02_get_charger_active_status(void)
 {
-	struct pcf50633 *pcf = gta02_pcf_ops;
+	struct pcf50633_mbc_ops *mbc = gta02_pcf_mbc_ops;
 
-	return pcf->mbc->get_status(pcf->mbc) & PCF50633_MBC_USB_ACTIVE;
+	return mbc->get_status(mbc) & PCF50633_MBC_USB_ACTIVE;
 }
 */
 
+static void gta02_restart(char mode, const char *cmd)
+{
+	/*  ensure backlight goes off before we restart  */
+	if (gta02_pcf_bl_ops && gta02_pcf_bl_ops->set_power)
+		gta02_pcf_bl_ops->set_power(gta02_pcf_bl_ops, 4);
+
+	s3c244x_restart(mode, cmd);
+}
+
 static void gta02_poweroff(void)
 {	
-	/*if (gta02_pcf_ops)
+	if (gta02_pcf_ops && gta02_pcf_ops->shutdown)
 		gta02_pcf_ops->shutdown(gta02_pcf_ops);
-	else*/
-		s3c244x_restart('h', NULL);
+	
+	gta02_restart('h', NULL);
 }
 
 static struct regulator_consumer_supply auto_consumers[] = {
@@ -891,7 +907,7 @@ static struct pcf50633_platform_data gta02_pcf_pdata = {
 	.force_shutdown_timeout = 8,
 
 	.gpio_base = GTA02_GPIO_PCF_BASE,
-	.irq_base = IRQ_S3C2440_AC97 + 1,
+	.irq_base = GTA02_PCF50633_IRQ_BASE,
 
 	.resumers = {
 		[0] =	0x0, PCF50633_INT1_USBINS |
@@ -926,7 +942,7 @@ static struct pcf50633_platform_data gta02_pcf_pdata = {
 				.valid_modes_mask = REGULATOR_MODE_NORMAL,
 				.valid_ops_mask = REGULATOR_CHANGE_VOLTAGE |
 						REGULATOR_CHANGE_STATUS,
-				.always_on = 1,
+				.always_on = 0,
 				.apply_uV = 1,
 			},
 		},
@@ -1057,7 +1073,9 @@ static int gta02_child_device_registered(struct device *dev)
 		gta02_add_child_device(dev, &bq27000_battery_device);
 		gta02_add_child_device(dev, &gta02_resume_reason_device);
 	} else if (strcmp(devname, "pcf50633-mbc") == 0) {
-		gta02_pcf_mbc = dev_get_drvdata(dev);
+		gta02_pcf_mbc_ops = dev_get_drvdata(dev);
+	} else if (strcmp(devname, "pcf50633-backlight") == 0) {
+		gta02_pcf_bl_ops = dev_get_drvdata(dev);
 	} else if (strcmp(devname, "pcf50633-gpio") == 0) {
 		gta02_add_child_device(dev, &gta02_gsm_supply_device);
 		gta02_add_child_device(dev, &gta02_usbhost_supply_device);
@@ -1079,7 +1097,8 @@ static int gta02_child_device_registered(struct device *dev)
 	} else if (strcmp(devname, "spi2.0") == 0) {
 		//pcf50633_bl_set_brightness_limit(gta02_pcf_ops, 0x3f);
 		//pcf50633_bl_set_power(gta02_pcf_ops, 0);
-		;
+		if (gta02_pcf_bl_ops)
+			gta02_pcf_bl_ops->set_power(gta02_pcf_bl_ops, 0);
 	} else {
 		return 0;
 	}
@@ -1094,10 +1113,13 @@ static int gta02_child_device_unregister(struct device *dev)
 	if (strcmp(devname, "glamo-gpio.0") == 0) {
 		platform_device_unregister(&gta02_glamo_spigpio_dev);
 	} else if (strcmp(devname, "0-0073") == 0) {
+		gta02_pcf_ops = NULL;
 		platform_device_unregister(&bq27000_battery_device);
 		platform_device_unregister(&gta02_resume_reason_device);
 	} else if (strcmp(devname, "pcf50633-mbc") == 0) {
-		gta02_pcf_mbc = NULL;
+		gta02_pcf_mbc_ops = NULL;
+	} else if (strcmp(devname, "pcf50633-backlight") == 0) {
+		gta02_pcf_bl_ops = NULL;
 	} else if (strcmp(devname, "pcf50633-gpio") == 0) {
 		platform_device_unregister(&gta02_gsm_supply_device);
 		platform_device_unregister(&gta02_usbhost_supply_device);
@@ -1118,6 +1140,8 @@ static int gta02_child_device_unregister(struct device *dev)
 		platform_device_unregister(&bq27000_battery_device);*/
 	} else if (strcmp(devname, "spi2.0") == 0) {
 		//pcf50633_bl_set_power(gta02_pcf_ops, 4);
+		if (gta02_pcf_bl_ops)
+			gta02_pcf_bl_ops->set_power(gta02_pcf_bl_ops, 4);
 	} else {
 		return 0;
 	}
@@ -1250,5 +1274,5 @@ MACHINE_START(NEO1973_GTA02, "GTA02")
 //	.nr_irqs		= (IRQ_S3C2440_AC97+1),
 	.init_machine	= gta02_machine_init,
 	.timer			= &s3c24xx_timer,
-	.restart		= s3c244x_restart,
+	.restart		= gta02_restart,
 MACHINE_END
