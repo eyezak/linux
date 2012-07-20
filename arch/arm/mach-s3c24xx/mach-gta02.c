@@ -90,12 +90,11 @@
 #include <mach/regs-mem.h>
 #include <mach/fb.h>
 
-//#include <mach/spi.h>
 #include <mach/hardware.h>
 #include <mach/gta02.h>
 
 #ifdef DH_PRESENT
-//#include <linux/power/fiq-hdq.h>
+#include <linux/power/fiq-hdq.h>
 #endif
 
 #include <plat/usb-control.h>
@@ -121,6 +120,8 @@
 static struct pcf50633_ops *gta02_pcf_ops;
 static struct pcf50633_mbc_ops *gta02_pcf_mbc_ops;
 static struct pcf50633_bl_ops *gta02_pcf_bl_ops;
+static struct device *gta02_fiq_hdq_dev;
+
 static struct pcf50633_platform_data gta02_pcf_pdata;
 
 /*	UARTs  */
@@ -696,26 +697,6 @@ static struct platform_device gta02_gsensor_userspace_consumer = {
 
 /* HDQ */
 
-static void gta02_hdq_gpio_direction_out(void)
-{
-        s3c2410_gpio_cfgpin(GTA02v5_GPIO_HDQ, S3C2410_GPIO_OUTPUT);
-}
-
-static void gta02_hdq_gpio_direction_in(void)
-{
-        s3c2410_gpio_cfgpin(GTA02v5_GPIO_HDQ, S3C2410_GPIO_INPUT);
-}
-
-static void gta02_hdq_gpio_set_value(int val)
-{
-        s3c2410_gpio_setpin(GTA02v5_GPIO_HDQ, val);
-}
-
-static int gta02_hdq_gpio_get_value(void)
-{
-        return s3c2410_gpio_getpin(GTA02v5_GPIO_HDQ);
-}
-
 static void gta02_hdq_fiq_handler(unsigned long irq, int disable)
 {
 	unsigned long intmask;
@@ -753,15 +734,18 @@ static void gta02_hdq_fiq_kick(unsigned int irq)
 
 }
 
-#ifdef fiq_hdq_platform_data
+#ifdef __LINUX_HDQ_H__
 struct fiq_hdq_platform_data gta02_hdq_platform_data = {
 	.timer_id = 2,
 	.timer_irq = IRQ_TIMER0 + 2,
+	.gpio = GTA02v5_GPIO_HDQ,
+	.gpio_output = S3C2410_GPIO_OUTPUT,
+	.gpio_input = S3C2410_GPIO_INPUT,
 
-    .gpio_dir_out = gta02_hdq_gpio_direction_out,
-    .gpio_dir_in = gta02_hdq_gpio_direction_in,
-    .gpio_set = gta02_hdq_gpio_set_value,
-    .gpio_get = gta02_hdq_gpio_get_value,
+    .gpio_dir_out = s3c2410_gpio_cfgpin,
+    .gpio_dir_in = s3c2410_gpio_cfgpin,
+    .gpio_set = s3c2410_gpio_setpin,
+    .gpio_get = s3c2410_gpio_getpin,
 
 	.set_fiq = s3c24xx_set_fiq,
 	.kick_fiq = gta02_hdq_fiq_kick,
@@ -771,26 +755,34 @@ struct fiq_hdq_platform_data gta02_hdq_platform_data = {
 static struct {} gta02_hdq_platform_data;
 #endif
 
-#ifdef hdq_device_info
-struct hdq_device_info gta02_hdq_device_info = {
+struct platform_device gta02_hdq_device = {
 	.name = "fiq-hdq",
-	.parent =  &s3c_device_timer[2].dev,
 	.id = -1,
-	
-	.data = &gta02_hdq_platform_data,
-	.size_data = sizeof (gta02_hdq_platform_data),
+	.dev = {
+		.parent =  &s3c_device_timer[2].dev,
+		.platform_data = &gta02_hdq_platform_data
+	}
 };
-#else
-static struct {} gta02_hdq_device_info;
-#endif
+
+static int gta02_hdq_read(struct device *dev, unsigned int addr)
+{
+	struct fiq_hdq_ops *ops;
+	
+	if (gta02_fiq_hdq_dev == 0)
+		return 0; // ENOENT ENXIO EPERM EFAULT EBUSY ENODEV
+	
+	ops = dev_get_drvdata(gta02_fiq_hdq_dev);
+	if (ops == 0)
+		return 0;
+	
+	return ops->read(gta02_fiq_hdq_dev, addr);
+}
 
 /* BQ27000 Battery */
 #ifdef __LINUX_BQ27X00_BATTERY_H__
 static struct bq27000_platform_data bq27000_pdata = {
         .name = "battery",
-#ifdef hdq_device_info
-        .hdq_info = &gta02_hdq_device_info,
-#endif
+        .read = gta02_hdq_read,
 };
 #else
 static struct {} bq27000_pdata;
@@ -1092,8 +1084,8 @@ static int gta02_child_device_registered(struct device *dev)
 		gta02_add_child_device(NULL, &gta02_pm_gps_dev);
 	} else if (strcmp(devname, "reg-fixed-voltage.1") == 0) {
 		gta02_add_child_device(NULL, &gta02_pm_usbhost_dev);
-	/* } else if (strcmp(devname, "fiq-hdq") == 0) {
-		gta02_add_child_device(dev, &bq27000_battery_device);*/
+	} else if (strcmp(devname, "fiq-hdq") == 0) {
+		gta02_fiq_hdq_dev = dev;
 	} else if (strcmp(devname, "spi2.0") == 0) {
 		//pcf50633_bl_set_brightness_limit(gta02_pcf_ops, 0x3f);
 		//pcf50633_bl_set_power(gta02_pcf_ops, 0);
@@ -1136,8 +1128,8 @@ static int gta02_child_device_unregister(struct device *dev)
 		platform_device_unregister(&gta02_pm_gps_dev);
 	} else if (strcmp(devname, "reg-fixed-voltage.1") == 0) {
 		platform_device_unregister(&gta02_pm_usbhost_dev);
-	/*} else if (strcmp(devname, "fiq-hdq") == 0) {
-		platform_device_unregister(&bq27000_battery_device);*/
+	} else if (strcmp(devname, "fiq-hdq") == 0) {
+		gta02_fiq_hdq_dev = NULL;
 	} else if (strcmp(devname, "spi2.0") == 0) {
 		//pcf50633_bl_set_power(gta02_pcf_ops, 4);
 		if (gta02_pcf_bl_ops)
@@ -1195,6 +1187,7 @@ static struct platform_device *gta02_devices[] __initdata = {
 //	&gta02_pm_bt_dev,
 	&gta02_pm_wlan_dev,
 //	&gta02_gsensor_userspace_consumer,
+	&gta02_hdq_device,
 };
 
 /*
