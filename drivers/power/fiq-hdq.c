@@ -42,6 +42,7 @@ enum hdq_bitbang_states {
 };
 
 struct hdq_priv {
+	struct fiq_hdq_ops ops;
 	struct mutex lock; /* if you want to use hdq, you have to take lock */
 	u8 hdq_probed; /* nonzero after HDQ driver probed */
 	u8 hdq_ads; /* b7..b6 = register address, b0 = r/w */
@@ -69,6 +70,65 @@ struct hdq_priv {
 	unsigned int timer_irq;
 	void (*handle_fiq)(unsigned long irq, int disable);
 };
+
+
+/* -------- FIQ handler in C --------- */
+#define FIQ_C_ISR_STACK_SIZE 	256
+
+static void __attribute__((naked)) __jump_to_isr(void)
+{
+	asm __volatile__ ("mov pc, r8");
+}
+
+
+static void __attribute__((naked)) __actual_isr(void)
+{
+	register void (*isr)(unsigned long) asm ("r9");
+	register unsigned long data asm ("r10");
+	
+	asm __volatile__ (
+		"stmdb	sp!, {r0-r12, lr};"
+		"mov     fp, sp;"
+	);
+	
+	isr(data);
+
+	asm __volatile__ (
+		"ldmia	sp!, {r0-r12, lr};"
+		"subs	pc, lr, #4;"
+	);
+
+	return;
+}
+
+void set_fiq_c_handler(void (*isr)(unsigned long), unsigned long data)
+{
+	static void * handler = NULL;
+	struct pt_regs regs;
+	
+	/* TODO: Properly handle this */
+	if (!isr || data == 0) {
+		kfree(handler);
+		handler = NULL;
+		set_fiq_handler(NULL, 0);
+		return;
+	}
+	
+	handler = kmalloc(4, GFP_KERNEL);
+	memcpy(handler, __jump_to_isr, 4);
+
+	memset(&regs, 0, sizeof(regs));
+	regs.ARM_r8 = (unsigned long) __actual_isr;
+	regs.ARM_r9 = (unsigned long) isr;
+	regs.ARM_r10 = (unsigned long) data;
+	regs.ARM_sp = 0xffff001c + FIQ_C_ISR_STACK_SIZE;
+
+	set_fiq_handler(handler, 4);
+
+	set_fiq_regs(&regs);
+}
+/* -------- FIQ handler in C ---------*/
+
 
 static void hdq_bad(struct hdq_priv *hdq)
 {
@@ -127,8 +187,8 @@ static void hdq_fiq_handler(unsigned long data)
 		if (hdq->hdq_request_ctr == hdq->hdq_transaction_ctr)
 			break;
 		hdq->hdq_ctr = 250 / HDQ_SAMPLE_PERIOD_US;
-		hdq->pdata->gpio_set(0);
-		hdq->pdata->gpio_dir_out();
+		hdq->pdata->gpio_set(hdq->pdata->gpio, 0);
+		hdq->pdata->gpio_dir_out(hdq->pdata->gpio, hdq->pdata->gpio_output);
 		hdq->hdq_tx_data_done = 0;
 		hdq->hdq_state = HDQB_TX_BREAK;
 		break;
@@ -137,7 +197,7 @@ static void hdq_fiq_handler(unsigned long data)
 		if (--hdq->hdq_ctr == 0) {
 			hdq->hdq_ctr = 60 / HDQ_SAMPLE_PERIOD_US;
 			hdq->hdq_state = HDQB_TX_BREAK_RECOVERY;
-			hdq->pdata->gpio_set(1);
+			hdq->pdata->gpio_set(hdq->pdata->gpio, 1);
 		}
 		break;
 
@@ -159,13 +219,13 @@ static void hdq_fiq_handler(unsigned long data)
 		hdq->hdq_state = HDQB_ADS_LOW;
 		hdq->hdq_shifter >>= 1;
 		hdq->hdq_bit--;
-		hdq->pdata->gpio_set(0);
+		hdq->pdata->gpio_set(hdq->pdata->gpio, 0);
 		break;
 
 	case HDQB_ADS_LOW:
 		if (--hdq->hdq_ctr)
 			break;
-		hdq->pdata->gpio_set(1);
+		hdq->pdata->gpio_set(hdq->pdata->gpio, 1);
 		hdq->hdq_state = HDQB_ADS_HIGH;
 		break;
 
@@ -193,7 +253,7 @@ static void hdq_fiq_handler(unsigned long data)
 		hdq->hdq_bit = 8; /* 8 bits of data */
 		hdq->hdq_ctr = 2500 / HDQ_SAMPLE_PERIOD_US;
 		hdq->hdq_state = HDQB_WAIT_RX;
-		hdq->pdata->gpio_dir_in();
+		hdq->pdata->gpio_dir_in(hdq->pdata->gpio, hdq->pdata->gpio_input);
 		break;
 
 	case HDQB_WAIT_TX: /* issue low for > 40us */
@@ -210,11 +270,11 @@ static void hdq_fiq_handler(unsigned long data)
 		hdq->hdq_transaction_ctr = hdq->hdq_request_ctr;
 		hdq->hdq_state = HDQB_IDLE; /* all tx is done */
 		/* idle in input mode, it's pulled up by 10K */
-		hdq->pdata->gpio_dir_in();
+		hdq->pdata->gpio_dir_in(hdq->pdata->gpio, hdq->pdata->gpio_input);
 		break;
 
 	case HDQB_WAIT_RX: /* wait for battery to talk to us */
-		if (hdq->pdata->gpio_get() == 0) {
+		if (hdq->pdata->gpio_get(hdq->pdata->gpio) == 0) {
 			/* it talks to us! */
 			hdq->hdq_ctr2 = 1;
 			hdq->hdq_bit = 8; /* 8 bits of data */
@@ -236,7 +296,7 @@ static void hdq_fiq_handler(unsigned long data)
 	 */
 
 	case HDQB_DATA_RX_LOW:
-		if (hdq->pdata->gpio_get()) {
+		if (hdq->pdata->gpio_get(hdq->pdata->gpio)) {
 			hdq->hdq_rx_data >>= 1;
 			if (hdq->hdq_ctr2 <= (65 / HDQ_SAMPLE_PERIOD_US))
 				hdq->hdq_rx_data |= 0x80;
@@ -264,7 +324,7 @@ static void hdq_fiq_handler(unsigned long data)
 		break;
 
 	case HDQB_DATA_RX_HIGH:
-		if (!hdq->pdata->gpio_get()) {
+		if (!hdq->pdata->gpio_get(hdq->pdata->gpio)) {
 			/* it talks to us! */
 			hdq->hdq_ctr2 = 1;
 			/* timeout */
@@ -404,7 +464,7 @@ static int hdq_suspend(struct platform_device *pdev, pm_message_t state)
 	struct hdq_priv *hdq = platform_get_drvdata(pdev);
 
 	/* after 18s of this, the battery monitor will also go to sleep */
-	hdq->pdata->gpio_dir_in();
+	hdq->pdata->gpio_dir_in(hdq->pdata->gpio, hdq->pdata->gpio_input);
 	
 	if (hdq->fiq_claimed) {
 		hdq->pdata->set_fiq(hdq->timer_irq, false);
@@ -424,8 +484,8 @@ static int hdq_resume(struct platform_device *pdev)
 {
 	struct hdq_priv *hdq = platform_get_drvdata(pdev);
 
-	hdq->pdata->gpio_set(1);
-	hdq->pdata->gpio_dir_out();
+	hdq->pdata->gpio_set(hdq->pdata->gpio, 1);
+	hdq->pdata->gpio_dir_out(hdq->pdata->gpio, hdq->pdata->gpio_output);
 
 	return 0;
 }
@@ -451,6 +511,7 @@ static int __devinit hdq_probe(struct platform_device *pdev)
 
 	/* set our HDQ comms pin from the platform data */
 	hdq->pdata = pdata;
+	hdq->ops.read = fiq_hdq_read;
 	
 	hdq->handle_fiq = pdata->handle_fiq;
 	hdq->fiq_handler.dev_id = hdq;
@@ -460,8 +521,8 @@ static int __devinit hdq_probe(struct platform_device *pdev)
 	hdq->fiq_claimed = 0;
 	platform_set_drvdata(pdev, hdq);
 
-	hdq->pdata->gpio_set(1);
-	hdq->pdata->gpio_dir_out();
+	hdq->pdata->gpio_set(hdq->pdata->gpio, 1);
+	hdq->pdata->gpio_dir_out(hdq->pdata->gpio, hdq->pdata->gpio_output);
 	
 	hdq->fiq_timer = pwm_request(pdata->timer_id, "fiq timer");
 	if (IS_ERR(hdq->fiq_timer)) {
@@ -492,13 +553,18 @@ static int __devexit hdq_remove(struct platform_device *pdev)
 {
 	struct hdq_priv *hdq = platform_get_drvdata(pdev);
 
+	if (hdq->fiq_claimed) {
+		hdq->pdata->set_fiq(hdq->timer_irq, false);
+		set_fiq_c_handler(NULL, 0);
+		pwm_disable(hdq->fiq_timer);
+		release_fiq(&hdq->fiq_handler);
+	}
+
 	pwm_free(hdq->fiq_timer);
 	device_remove_file(&pdev->dev, &dev_attr_dump);
 	kfree(hdq);
 	return 0;
 }
-
-void    (*release)(struct device *dev);
 
 static struct platform_driver hdq_driver = {
 	.probe		= hdq_probe,

@@ -14,6 +14,13 @@ config POWER_SUPPLY_DEBUG
 	  Say Y here to enable debugging messages for power supply class
 	  and drivers.
 
+config FIQ_HDQ
+	tristate "GPIO-based Bitbanging HDQ using FIQ"
+	select FIQ
+	help
+	  Say Y here to enable support for fiq-based HDQ (this should be 
+	  selected automatically if you kneed it).
+
 config PDA_POWER
 	tristate "Generic PDA/phone power driver"
 	depends on !S390
@@ -153,6 +160,7 @@ config BATTERY_BQ27X00_I2C
 config BATTERY_BQ27X00_PLATFORM
 	bool "BQ27000 support"
 	depends on BATTERY_BQ27x00
+	select FIQ_HDQ if MACH_NEO1973_GTA02
 	default y
 	help
 	  Say Y here to enable support for batteries with BQ27000 (HDQ) chips.
