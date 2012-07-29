@@ -635,6 +635,11 @@ static struct resource gta02_glamo_resources[] = {
 		.end	= GTA02_IRQ_3D,
 		.flags	= IORESOURCE_IRQ,
 	},
+	[2] = {
+		.start	= GTA02_GLAMO_IRQ_BASE,
+		.end	= GTA02_GLAMO_IRQ_BASE,
+		.flags	= IORESOURCE_IRQ,
+	},
 };
 #ifdef __GLAMO_MFD_H
 static struct glamo_platform_data gta02_glamo_pdata = {
@@ -644,7 +649,7 @@ static struct glamo_platform_data gta02_glamo_pdata = {
 
 	.osci_clock_rate = 32768,
 	.gpio_3dreset = GTA02_GPIO_3D_RESET,
-	.irq_base = GTA02_GLAMO_IRQ_BASE,
+	//.irq_base = GTA02_GLAMO_IRQ_BASE,
 
 	.glamo_external_reset = gta02_glamo_external_reset,
 };

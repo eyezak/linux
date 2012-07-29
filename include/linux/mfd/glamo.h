@@ -9,12 +9,13 @@ struct glamo_mmc_platform_data {
 	int	(*glamo_mmc_use_slow)(void);
 
 	unsigned nonremovable:1;
-
+	
 	struct glamo_core *core;
 };
 
 struct glamo_gpio_platform_data {
 	int base;
+	void (*registered)(struct device *dev);
 };
 
 struct glamo_platform_data {
@@ -44,12 +45,9 @@ enum glamo_engine {
 	GLAMO_ENGINE_RISC = 11,
 	GLAMO_ENGINE_MICROP1_MPEG_ENC = 12,
 	GLAMO_ENGINE_MICROP1_MPEG_DEC = 13,
-#if 0
-	GLAMO_ENGINE_H264_DEC = 14,
-	GLAMO_ENGINE_RISC1 = 15,
-	GLAMO_ENGINE_SPI = 16,
-#endif
 	__NUM_GLAMO_ENGINES
 };
+
+#define GLAMO_ENGINE_ALL (__NUM_GLAMO_ENGINES)
 
 #endif

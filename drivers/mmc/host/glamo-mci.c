@@ -155,7 +155,7 @@ static int glamo_mci_clock_disable(struct mmc_host *mmc)
 {
 	struct glamo_mci_host *host = mmc_priv(mmc);
 	glamo_engine_suspend(host->core, GLAMO_ENGINE_MMC);
-	msleep(1000 / 16);
+	//msleep(1000 / 16);
 	
 	return 0;
 }
@@ -595,13 +595,7 @@ static void glamo_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	int rate;
 	int sd_drive;
 	int ret;
-
-	//mmc_host_enable(mmc); mmc_try_claim_host
-	/*if (__mmc_claim_host(mmc, NULL) != 0) {
-		dev_err(&host->pdev->dev, "Failed to claim mmc host\n");
-		return;
-	}*/
-
+	
 	/* Set power */
 	glamo_mci_set_power_mode(host, ios->power_mode);
 
@@ -616,17 +610,6 @@ static void glamo_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	rate = glamo_mci_set_card_clock(host, ios->clock);
 
-	if ((ios->power_mode == MMC_POWER_ON) ||
-		(ios->power_mode == MMC_POWER_UP)) {
-		dev_info(&host->pdev->dev,
-			"powered (vdd = %hu) clk: %dkHz div=%hu (req: %ukHz). "
-			"Bus width=%d\n", ios->vdd,
-			rate / 1000, 0,
-			ios->clock / 1000, (int)ios->bus_width);
-	} else {
-		dev_info(&host->pdev->dev, "glamo_mci_set_ios: power down.\n");
-	}
-
 	/* set bus width */
 	if (ios->bus_width == MMC_BUS_WIDTH_4)
 		bus_width = GLAMO_BASIC_MMC_EN_4BIT_DATA;
@@ -635,19 +618,26 @@ static void glamo_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	if (sd_drive > 3)
 		sd_drive = 3;
 
+    udelay(1);
 	glamomci_reg_set_bit_mask(host, GLAMO_REG_MMC_BASIC,
 				GLAMO_BASIC_MMC_EN_4BIT_DATA | 0xc0,
 						   bus_width | sd_drive << 6);
+	
 
-	udelay(1);
-	//mmc_release_host(mmc);
-	/*if (host->power_mode == MMC_POWER_OFF)
-		mmc_host_disable(host->mmc);
-	else
-		mmc_host_lazy_disable(host->mmc);*/
+	if ((ios->power_mode == MMC_POWER_ON) ||
+		(ios->power_mode == MMC_POWER_UP)) {
+		dev_printk(rate > 1000000 ? KERN_INFO : KERN_DEBUG, &host->pdev->dev,
+			"ios: power %s [%hu.%huV, %d%s, %d-bit]",
+			(ios->power_mode == MMC_POWER_ON) ? "on" : "up",
+			ios->vdd / 10, ios->vdd % 10, HR_FREQ(rate),
+			(ios->bus_width == MMC_BUS_WIDTH_4) ? 4 : 1);
+	} else {
+		dev_info(&host->pdev->dev, "ios: power down\n");
+	}
+	
 }
 
-static void glamo_mci_pre_request(struct mmc_host *mmc,
+static void __attribute__ ((unused)) glamo_mci_pre_request(struct mmc_host *mmc,
 		struct mmc_request *mrq, bool is_first_req)
 {
 	struct glamo_mci_host *host = mmc_priv(mmc);
@@ -659,7 +649,7 @@ static void glamo_mci_pre_request(struct mmc_host *mmc,
 		do_pio_write(host, mrq->data);
 }
 
-static void glamo_mci_post_request(struct mmc_host *mmc,
+static void __attribute__ ((unused)) glamo_mci_post_request(struct mmc_host *mmc,
 		struct mmc_request *mrq, int err)
 {
 	struct glamo_mci_host *host = mmc_priv(mmc);
@@ -676,6 +666,18 @@ static void glamo_mci_post_request(struct mmc_host *mmc,
 	mrq->data->host_cookie = 0;
 }
 
+static int glamo_mci_get_ro(struct mmc_host *mmc)
+{
+	return 0;
+}
+
+static void glamo_mci_hw_reset(struct mmc_host *mmc)
+{
+	struct glamo_mci_host *host = mmc_priv(mmc);
+	
+	glamo_mci_reset(host);
+}
+
 static struct mmc_host_ops glamo_mci_ops = {
 	.enable		= glamo_mci_clock_enable,
 	.disable	= glamo_mci_clock_disable,
@@ -685,6 +687,8 @@ static struct mmc_host_ops glamo_mci_ops = {
 	.pre_req	= glamo_mci_pre_request,
 */
 	.set_ios	= glamo_mci_set_ios,
+	.get_ro		= glamo_mci_get_ro,
+	.hw_reset	= glamo_mci_hw_reset,
 };
 
 static int __devinit glamo_mci_probe(struct platform_device *pdev)
@@ -814,13 +818,10 @@ static int __devinit glamo_mci_probe(struct platform_device *pdev)
 
 	//mmc_set_disable_delay(mmc, 1000 / 16);
 
-	//mmc_host_enable(mmc);
-	__mmc_claim_host(mmc, NULL);
-	if (ret != 0) {
-		dev_err(&host->pdev->dev, "Failed to claim mmc host\n");
-		goto probe_iounmap_data;
-	}
-	glamo_mci_reset(host);
+	glamo_mci_hw_reset(mmc);
+	
+	dev_info(&pdev->dev, "%s, %d%s to %d%s, SDIO IRQ %d\n",
+		mmc_hostname(mmc), HR_FREQ(mmc->f_min), HR_FREQ(mmc->f_max), host->irq);
 
 	ret = mmc_add_host(mmc);
 	if (ret) {
@@ -828,12 +829,9 @@ static int __devinit glamo_mci_probe(struct platform_device *pdev)
 		goto probe_mmc_host_disable;
 	}
 
-	mmc_release_host(mmc);
-
 	return 0;
 
 probe_mmc_host_disable:
-	mmc_release_host(mmc);
 	free_irq(host->irq, host);
 probe_iounmap_data:
 	iounmap(host->data_base);
@@ -858,16 +856,12 @@ static int __devexit glamo_mci_remove(struct platform_device *pdev)
 	struct mmc_host	*mmc = platform_get_drvdata(pdev);
 	struct glamo_mci_host *host = mmc_priv(mmc);
 
-	//mmc_host_enable(mmc);
-	if (__mmc_claim_host(mmc, NULL) == 0) {
-		mmc_remove_host(mmc);
-		mmc_release_host(mmc);
-	}
-	//mmc_host_disable(mmc);
-
 	synchronize_irq(host->irq);
+	mmc_remove_host(mmc);
+    
+	glamo_engine_disable(host->core, GLAMO_ENGINE_MMC);
+	
 	free_irq(host->irq, host);
-
 	iounmap(host->mmio_base);
 	iounmap(host->data_base);
 	release_mem_region(host->mmio_mem->start,
@@ -893,11 +887,7 @@ static int glamo_mci_suspend(struct device *dev)
 
 	disable_irq(host->irq);
 
-	ret = __mmc_claim_host(mmc, NULL);
-	if (ret == 0) {
-		ret = mmc_suspend_host(mmc);
-		mmc_release_host(mmc);
-	}
+	ret = mmc_suspend_host(mmc);
 
 	return ret;
 }
@@ -908,18 +898,12 @@ static int glamo_mci_resume(struct device *dev)
 	struct glamo_mci_host *host = mmc_priv(mmc);
 	int ret;
 
-	ret = __mmc_claim_host(mmc, NULL);
-	if (ret != 0)
-		return ret;
-
 	glamo_mci_reset(host);
 	mdelay(10);
 
 	enable_irq(host->irq);
 
 	ret = mmc_resume_host(host->mmc);
-
-	mmc_release_host(mmc);
 
 	return ret;
 }

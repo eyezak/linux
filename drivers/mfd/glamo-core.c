@@ -36,8 +36,6 @@
 #include <linux/spinlock.h>
 #include <linux/mfd/core.h>
 #include <linux/mfd/glamo.h>
-#include <linux/mfd/glamo-regs.h>
-#include <linux/mfd/glamo-core.h>
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/debugfs.h>
@@ -45,6 +43,9 @@
 #include <linux/uaccess.h>
 
 #include <linux/pm.h>
+
+#include <linux/mfd/glamo-regs.h>
+#include <linux/mfd/glamo-core.h>
 
 #define GLAMO_MEM_REFRESH_COUNT 0x100
 
@@ -232,7 +233,7 @@ void glamo_pixclock_slow (struct glamo_core *glamo)
 	/* it's not a problems if in rare case we do not slow down glamo properly
 	   as all we'll get in that case is singe jittered value */
 	
-	glamo->slowed_divider = glamo_reg_read (glamo, 0x36) & 0xFF;
+	glamo->slowed_divider = glamo_reg_read(glamo, 0x36) & 0xFF;
 	reg_set_bit_mask (glamo, 0x36, 0xFF, 0xFF);
 
 }
@@ -265,9 +266,24 @@ static struct resource glamo_fb_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	}, {
 		.name	= "glamo-fb-mem",
-		.start	= GLAMO_OFFSET_FB,
-		.end	= GLAMO_OFFSET_FB + GLAMO_FB_SIZE - 1,
+		.start	= GLAMO_MEM_BASE + GLAMO_OFFSET_FB,
+		.end	= GLAMO_MEM_BASE + GLAMO_OFFSET_FB + GLAMO_FB_SIZE - 1,
 		.flags	= IORESOURCE_MEM,
+	}, {
+		.name   = "glamo-cmdq-regs",
+		.start  = GLAMO_REGOFS_CMDQUEUE,
+		.end    = GLAMO_REGOFS_RISC - 1,
+		.flags  = IORESOURCE_MEM,
+	}, {
+		.name   = "glamo-2d-regs",
+		.start  = GLAMO_REGOFS_2D,
+		.end    = GLAMO_REGOFS_3D- 1,
+		.flags  = IORESOURCE_MEM,
+	}, {
+		.name   = "glamo-2d-irq",
+		.start  = GLAMO_IRQ_2D,
+		.end    = GLAMO_IRQ_2D,
+		.flags  = IORESOURCE_IRQ,
 	},
 };
 
@@ -279,8 +295,8 @@ static struct resource glamo_mmc_resources[] = {
 		.flags	= IORESOURCE_MEM
 	}, {
 		.name	= "glamo-mmc-mem",
-		.start	= GLAMO_OFFSET_FB + GLAMO_FB_SIZE,
-		.end	= GLAMO_OFFSET_FB + GLAMO_FB_SIZE +
+		.start	= GLAMO_MEM_BASE + GLAMO_OFFSET_MMC,
+		.end	= GLAMO_MEM_BASE + GLAMO_OFFSET_MMC +
 				  GLAMO_MMC_BUFFER_SIZE - 1,
 		.flags	= IORESOURCE_MEM
 	}, {
@@ -514,6 +530,25 @@ static const struct glamo_engine_reg_set glamo_2d_regs[] = {
 	}
 };
 
+static const struct glamo_engine_reg_set glamo_3d_regs[] = {
+	{
+		.reg = GLAMO_REG_CLOCK_3D,
+			   GLAMO_CLOCK_3D_EN_M8CLK |
+			   GLAMO_CLOCK_3D_DG_M8CLK,
+
+		.mask_suspended = GLAMO_CLOCK_3D_EN_ECLK |
+		                  GLAMO_CLOCK_3D_DG_ECLK,
+
+		.mask_enabled = GLAMO_CLOCK_3D_EN_RCLK |
+		                GLAMO_CLOCK_3D_DG_RCLK,
+	},
+	{ 
+		.reg = GLAMO_REG_CLOCK_GEN5_1,
+		.mask_suspended = 0,
+		.mask_enabled = GLAMO_CLOCK_GEN51_EN_DIV_GCLK,
+	},
+};
+
 static const struct glamo_engine_reg_set glamo_cmdq_regs[] = {
 	{ GLAMO_REG_CLOCK_2D,
 	GLAMO_CLOCK_2D_EN_M6CLK,
@@ -535,6 +570,8 @@ static const struct glamo_engine_desc glamo_engines[] = {
 					glamo_mmc_regs),
 	[GLAMO_ENGINE_2D] = GLAMO_ENGINE("2D", GLAMO_HOSTBUS2_MMIO_EN_2D,
 					glamo_2d_regs),
+	[GLAMO_ENGINE_3D] = GLAMO_ENGINE("3D", GLAMO_HOSTBUS2_MMIO_EN_3D,
+					glamo_3d_regs),
 	[GLAMO_ENGINE_CMDQ] = GLAMO_ENGINE("CMDQ", GLAMO_HOSTBUS2_MMIO_EN_CQ,
 					glamo_cmdq_regs),
 };
@@ -558,6 +595,7 @@ int __glamo_engine_enable(struct glamo_core *glamo, enum glamo_engine engine)
 	case GLAMO_ENGINE_LCD:
 	case GLAMO_ENGINE_MMC:
 	case GLAMO_ENGINE_2D:
+	case GLAMO_ENGINE_3D:
 	case GLAMO_ENGINE_CMDQ:
 		break;
 	default:
@@ -583,8 +621,10 @@ int glamo_engine_enable(struct glamo_core *glamo, enum glamo_engine engine)
 
 	if (glamo->engine_state[engine] != GLAMO_ENGINE_ENABLED) {
 		ret = __glamo_engine_enable(glamo, engine);
-		if (!ret)
+		if (!ret) {
 			glamo->engine_state[engine] = GLAMO_ENGINE_ENABLED;
+			//dev_info(&glamo->pdev->dev, "engine %u enabled\n", engine);
+		}
 	}
 
 	spin_unlock(&glamo->lock);
@@ -603,6 +643,7 @@ int __glamo_engine_disable(struct glamo_core *glamo, enum glamo_engine engine)
 	case GLAMO_ENGINE_LCD:
 	case GLAMO_ENGINE_MMC:
 	case GLAMO_ENGINE_2D:
+	case GLAMO_ENGINE_3D:
 	case GLAMO_ENGINE_CMDQ:
 		break;
 	default:
@@ -627,8 +668,10 @@ int glamo_engine_disable(struct glamo_core *glamo, enum glamo_engine engine)
 
 	if (glamo->engine_state[engine] != GLAMO_ENGINE_DISABLED) {
 		ret = __glamo_engine_disable(glamo, engine);
-		if (!ret)
+		if (!ret) {
 			glamo->engine_state[engine] = GLAMO_ENGINE_DISABLED;
+			//dev_info(&glamo->pdev->dev, "engine %u disabled\n", engine);
+		}
 	}
 
 	spin_unlock(&glamo->lock);
@@ -673,11 +716,14 @@ int glamo_engine_suspend(struct glamo_core *glamo, enum glamo_engine engine)
 
 	if (glamo->engine_state[engine] != GLAMO_ENGINE_SUSPENDED) {
 		ret = __glamo_engine_suspend(glamo, engine);
-		if (!ret)
+		if (!ret) {
 			glamo->engine_state[engine] = GLAMO_ENGINE_SUSPENDED;
+			//dev_info(&glamo->pdev->dev, "engine %u suspended\n", engine);
+		}
 	}
 
 	spin_unlock(&glamo->lock);
+	
 
 	return ret;
 }
@@ -695,6 +741,10 @@ static const struct glamo_script reset_regs[] = {
 	},
 	[GLAMO_ENGINE_2D] = {
 		GLAMO_REG_CLOCK_2D, GLAMO_CLOCK_2D_RESET
+	},
+	[GLAMO_ENGINE_3D] = {
+		GLAMO_REG_CLOCK_3D, GLAMO_CLOCK_3D_BACK_RESET |
+		GLAMO_CLOCK_3D_FRONT_RESET
 	},
 	[GLAMO_ENGINE_JPEG] = {
 		GLAMO_REG_CLOCK_JPEG, GLAMO_CLOCK_JPEG_RESET
@@ -726,7 +776,7 @@ int glamo_pll_rate(struct glamo_core *glamo,
 
 	switch (pll) {
 	case GLAMO_PLL1:
-		reg = __reg_read(glamo, GLAMO_REG_PLL_GEN1);
+		reg = __reg_read(glamo, GLAMO_REG_PLL_GEN1) & 0xfff;
 		break;
 	case GLAMO_PLL2:
 		reg = __reg_read(glamo, GLAMO_REG_PLL_GEN3);
@@ -743,7 +793,7 @@ int glamo_engine_reclock(struct glamo_core *glamo,
 			 enum glamo_engine engine,
 			 int hz)
 {
-	int pll;
+	int pll, realhz;
 	uint16_t reg, mask, div;
 
 	if (!hz)
@@ -777,15 +827,32 @@ int glamo_engine_reclock(struct glamo_core *glamo,
 	if (div > mask)
 		div = mask;
 
-	dev_dbg(&glamo->pdev->dev,
-			"PLL %d, kHZ %d, div %d\n", pll, hz / 1000, div);
+	realhz = pll / (div + 1);
+	dev_dbg(&glamo->pdev->dev, "reclocked engine %d to %u%s (div %u)\n",
+			engine, HR_FREQ(realhz), div);
+			//"PLL %d, kHZ %d, div %d\n", pll, hz / 1000, div);
 
 	reg_set_bit_mask(glamo, reg, mask, div);
 	mdelay(5); /* wait some time to stabilize */
 
-	return pll / (div + 1);
+	return realhz;
 }
 EXPORT_SYMBOL_GPL(glamo_engine_reclock);
+
+/* sysfs attributes */
+static int glamo_check_status(struct glamo_core *glamo);
+
+static ssize_t show_status(struct device *dev, struct device_attribute *attr,
+			    char *buf)
+{
+    int n;
+    struct glamo_core *glamo = dev_get_drvdata(dev);
+	
+	n = glamo_check_status(glamo);
+	
+	return snprintf(buf, PAGE_SIZE, n ? "ok\n" : "cancel\n");
+}
+static DEVICE_ATTR(status, 0400, show_status, NULL);
 
 /***********************************************************************
  * script support
@@ -809,6 +876,7 @@ static const uint16_t reg_0x200[] = {
 	0xea3, /* 2 waits on Async BB R & W, Use PLL 2 for mem bus */
 	0xe53, /* 1 waits on Async BB R & W, Use PLL 2 for mem bus */
 };
+
 
 static int glamo_run_script(struct glamo_core *glamo,
 				const struct glamo_script *script, int len,
@@ -834,10 +902,10 @@ static int glamo_run_script(struct glamo_core *glamo,
 				status = __reg_read(glamo, GLAMO_REG_PLL_GEN5);
 			} while ((status & 3) != 3);
 			break;
-		case 0x200:
+/*		case 0x200:
 			__reg_write(glamo, line->reg,
 					reg_0x200[slow_memory & 0x7]);
-			break;
+			break;*/
 		default:
 			__reg_write(glamo, line->reg, line->val);
 			break;
@@ -846,9 +914,8 @@ static int glamo_run_script(struct glamo_core *glamo,
 
 	return 0;
 }
-
-static const struct glamo_script glamo_init_script[] = {
-	{ GLAMO_REG_CLOCK_HOST,		0x1000 },
+static const struct glamo_script glamo_init_script_old[] = {
+	{ GLAMO_REG_CLOCK_HOST,		0x1000 },	/* reset */
 	{ GLAMO_SCRIPT_WAIT,		     2 },
 	{ GLAMO_REG_CLOCK_MEMORY,	0x1000 },
 	{ GLAMO_REG_CLOCK_MEMORY,	0x2000 },
@@ -919,6 +986,321 @@ static const struct glamo_script glamo_init_script[] = {
 	{ GLAMO_REG_CLOCK_MEMORY,	0x000b },
 };
 
+static const struct glamo_script glamo_check_script[] = {
+	/* setup clocks */
+	{ GLAMO_REG_CLOCK_HOST,		0x000d },
+	{ GLAMO_REG_CLOCK_MEMORY,	0x000a },
+	/*{ GLAMO_REG_CLOCK_LCD,		0x0000 },
+	{ GLAMO_REG_CLOCK_MMC,		0x0000 },*/
+	{ GLAMO_REG_CLOCK_ISP,		0x0000 },
+	{ GLAMO_REG_CLOCK_ISP,		0x0000 },
+	{ GLAMO_REG_CLOCK_JPEG,		0x0000 },
+	{ GLAMO_REG_CLOCK_3D,		0x0000 },
+	{ GLAMO_REG_CLOCK_2D,		0x0000 },
+	{ GLAMO_REG_CLOCK_RISC1,	0x0000 },
+	{ GLAMO_REG_CLOCK_MPEG,		0x0000 },
+	{ GLAMO_REG_CLOCK_MPROC,	0x0000 },
+	{ GLAMO_SCRIPT_WAIT,		     5 },
+	
+	{ GLAMO_REG_PLL_GEN1,		0x05db },	/* 48MHz */
+	{ GLAMO_REG_PLL_GEN3,		0x0aba },	/* 90MHz */
+	{ GLAMO_SCRIPT_LOCK_PLL, 0 },
+	
+	{ GLAMO_REG_CLOCK_GEN5_1,	0x18ff },	/* 1801 ?? */
+	{ GLAMO_REG_CLOCK_GEN5_2,	0x051f },
+	{ GLAMO_REG_CLOCK_GEN6,		0x2000 },
+	/*  7 and 8 are cached at suspend and restored */
+	{ GLAMO_REG_CLOCK_GEN10,	0x0017 },	/* sdram clock */
+	{ GLAMO_REG_CLOCK_GEN11,	0x0017 },
+	
+	{ GLAMO_REG_HOSTBUS(1),		0x0e03 /* this is replaced by script parser */ },
+	{ GLAMO_REG_HOSTBUS(2),		0x07ff }, /* TODO: Disable all */
+	{ GLAMO_REG_HOSTBUS(4),		0x0080 },	/* default */
+	{ GLAMO_REG_HOSTBUS(5),		0x0244 },	/* default 344 */
+	{ GLAMO_REG_HOSTBUS(6),		0x0600 },	/* default 600 */
+	{ GLAMO_REG_HOSTBUS(10),	0x0000 },	/* default 1 */
+	{ GLAMO_REG_HOSTBUS(11),	0x4000 },	/* default 0 */
+	{ GLAMO_REG_HOSTBUS(12),	0xf00e },	/* deafult 400e */
+	
+	/* S-Media recommended "set tiling mode to 512 mode for memory access
+	 * more efficiency when 640x480" */
+	{ GLAMO_REG_MEM_TYPE,		0x0c74 }, /* 8MB, 16 word pg wr+rd */
+	{ GLAMO_REG_MEM_GEN,		0xafaf }, /* 63 grants min + max */
+
+	{ GLAMO_REG_MEM_TIMING1,	0x0108 },
+	{ GLAMO_REG_MEM_TIMING2,	0x0010 }, /* Taa = 3 MCLK */
+	{ GLAMO_REG_MEM_TIMING3,	0x0000 },
+	{ GLAMO_REG_MEM_TIMING4,	0x0000 }, /* CE1# delay fall/rise */
+	{ GLAMO_REG_MEM_TIMING5,	0x0000 }, /* UB# LB# */
+	{ GLAMO_REG_MEM_TIMING6,	0x0000 }, /* OE# */
+	{ GLAMO_REG_MEM_TIMING7,	0x0000 }, /* WE# */
+	{ GLAMO_REG_MEM_TIMING8,	0x1002 }, /* MCLK delay, was 0x1000 */
+	{ GLAMO_REG_MEM_TIMING9,	0x6006 },
+	{ GLAMO_REG_MEM_TIMING10,	0x00ff },
+	{ GLAMO_REG_MEM_TIMING11,	0x0001 },
+	{ GLAMO_REG_MEM_POWER1,		0x0020 },
+	{ GLAMO_REG_MEM_POWER2,		0x0000 },
+	{ GLAMO_REG_MEM_DRAM1,		0xe100 },
+	{ GLAMO_REG_MEM_DRAM2,		0x01d6 },
+};
+
+static const struct glamo_script glamo_init_script[] = {
+	/* reset clocks */
+	{ GLAMO_REG_CLOCK_HOST,		0x1000 },
+	{ GLAMO_SCRIPT_WAIT,		     2 },
+	{ GLAMO_REG_CLOCK_MEMORY,	0x300a },
+	{ GLAMO_REG_CLOCK_LCD,		0x1000 },
+	{ GLAMO_REG_CLOCK_MMC,		0x1000 },
+	{ GLAMO_REG_CLOCK_ISP,		0x1000 },
+	{ GLAMO_REG_CLOCK_ISP,		0x3000 },
+	{ GLAMO_REG_CLOCK_JPEG,		0x1000 },
+	{ GLAMO_REG_CLOCK_3D,		0x3000 },
+	{ GLAMO_REG_CLOCK_2D,		0x3000 },
+	{ GLAMO_REG_CLOCK_RISC1,	0x1000 },
+	{ GLAMO_REG_CLOCK_MPEG,		0x3000 },
+	{ GLAMO_REG_CLOCK_MPROC,	0x1000 },
+	{ GLAMO_SCRIPT_WAIT,		     5 },
+	/* setup clocks */
+	{ GLAMO_REG_CLOCK_HOST,		0x000d },
+	{ GLAMO_REG_CLOCK_MEMORY,	0x000a },
+	{ GLAMO_REG_CLOCK_LCD,		0x0000 },
+	{ GLAMO_REG_CLOCK_MMC,		0x0000 },
+	{ GLAMO_REG_CLOCK_ISP,		0x0000 },
+	{ GLAMO_REG_CLOCK_ISP,		0x0000 },
+	{ GLAMO_REG_CLOCK_JPEG,		0x0000 },
+	{ GLAMO_REG_CLOCK_3D,		0x0000 },
+	{ GLAMO_REG_CLOCK_2D,		0x0000 },
+	{ GLAMO_REG_CLOCK_RISC1,	0x0000 },
+	{ GLAMO_REG_CLOCK_MPEG,		0x0000 },
+	{ GLAMO_REG_CLOCK_MPROC,	0x0000 },
+	{ GLAMO_SCRIPT_WAIT,		     5 },
+	
+	{ GLAMO_REG_PLL_GEN1,		0x05db },	/* 48MHz */
+	{ GLAMO_REG_PLL_GEN3,		0x0aba },	/* 90MHz */
+	{ GLAMO_SCRIPT_LOCK_PLL, 0 },
+	
+	{ GLAMO_REG_CLOCK_GEN5_1,	0x18ff },	/* 1801 ?? */
+	{ GLAMO_REG_CLOCK_GEN5_2,	0x051f },
+	{ GLAMO_REG_CLOCK_GEN6,		0x2000 },
+	{ GLAMO_REG_CLOCK_GEN7,		0x0105 },
+	{ GLAMO_REG_CLOCK_GEN8,		0x0100 },
+	{ GLAMO_REG_CLOCK_GEN10,	0x0017 },	/* sdram clock */
+	{ GLAMO_REG_CLOCK_GEN11,	0x0017 },
+	
+	{ GLAMO_REG_HOSTBUS(1),		0x0e03 /* this is replaced by script parser */ },
+	{ GLAMO_REG_HOSTBUS(2),		0x07ff }, /* TODO: Disable all - was 0x7ff*/
+	{ GLAMO_REG_HOSTBUS(4),		0x0080 },	/* default */
+	{ GLAMO_REG_HOSTBUS(5),		0x0244 },	/* default 344 */
+	{ GLAMO_REG_HOSTBUS(6),		0x0600 },	/* default 600 */
+	{ GLAMO_REG_HOSTBUS(10),	0x0000 },	/* default 1 */
+	{ GLAMO_REG_HOSTBUS(11),	0x4000 },	/* default 0 */
+	{ GLAMO_REG_HOSTBUS(12),	0xf00e },	/* deafult 400e */
+	
+	/*
+	 * b9 of this register MUST be zero to get any interrupts on INT#
+	 * the other set bits enable all the engine interrupt sources
+	 */
+	{ GLAMO_REG_IRQ_ENABLE,		0x0100 },
+
+	/* S-Media recommended "set tiling mode to 512 mode for memory access
+	 * more efficiency when 640x480" */
+	{ GLAMO_REG_MEM_TYPE,		0x0c74 }, /* 8MB, 16 word pg wr+rd */
+	{ GLAMO_REG_MEM_GEN,		0xafaf }, /* 63 grants min + max */
+
+	{ GLAMO_REG_MEM_TIMING1,	0x0108 },
+	{ GLAMO_REG_MEM_TIMING2,	0x0010 }, /* Taa = 3 MCLK */
+	{ GLAMO_REG_MEM_TIMING3,	0x0000 },
+	{ GLAMO_REG_MEM_TIMING4,	0x0000 }, /* CE1# delay fall/rise */
+	{ GLAMO_REG_MEM_TIMING5,	0x0000 }, /* UB# LB# */
+	{ GLAMO_REG_MEM_TIMING6,	0x0000 }, /* OE# */
+	{ GLAMO_REG_MEM_TIMING7,	0x0000 }, /* WE# */
+	{ GLAMO_REG_MEM_TIMING8,	0x1002 }, /* MCLK delay, was 0x1000 */
+	{ GLAMO_REG_MEM_TIMING9,	0x6006 },
+	{ GLAMO_REG_MEM_TIMING10,	0x00ff },
+	{ GLAMO_REG_MEM_TIMING11,	0x0001 },
+	{ GLAMO_REG_MEM_POWER1,		0x0020 },
+	{ GLAMO_REG_MEM_POWER2,		0x0000 },
+	{ GLAMO_REG_MEM_DRAM1,		0x0000 },
+	{ GLAMO_SCRIPT_WAIT,		     1 },
+	{ GLAMO_REG_MEM_DRAM1,		0xc100 },
+	{ GLAMO_SCRIPT_WAIT,		     1 },
+	{ GLAMO_REG_MEM_DRAM1,		0xe100 },
+	{ GLAMO_REG_MEM_DRAM2,		0x01d6 },
+};
+
+static struct glamo_script glamo_resume_script[] = {
+	//	Activate PLLs	*/
+	{ GLAMO_REG_DFT_GEN6,		0x0001 },
+	//  { GLAMO_SCRIPT_LOCK_PLL, 	5 },
+	{ GLAMO_REG_PLL_GEN3,		0x0aba },
+	
+	{ GLAMO_REG_HOSTBUS(1),		0x0e03 },
+	
+	{ GLAMO_REG_CLOCK_GEN5_1,	0x18ff },
+
+    { GLAMO_REG_CLOCK_MEMORY,	0x000a },
+
+	//	Reset Dram	*/
+	{ GLAMO_REG_MEM_DRAM2,		0x01d6 },
+	{ GLAMO_SCRIPT_WAIT,        1 },
+
+	//	Reset Memory Clock	*/
+	{ GLAMO_REG_MEM_DRAM1,		0xc100 },
+	{ GLAMO_REG_MEM_DRAM1,		0xe100 },
+};
+
+static int glamo_suspend(struct device *dev)
+{
+	struct glamo_core *glamo = dev_get_drvdata(dev);
+	int n;
+
+	//spin_lock(&glamo->lock);
+
+	/* nuke interrupts */
+	__reg_write(glamo, GLAMO_REG_IRQ_ENABLE, 0x200);
+	glamo->saved_irq_mask = __reg_read(glamo, GLAMO_REG_IRQ_ENABLE);
+	glamo->regcache[0] = __reg_read(glamo, GLAMO_REG_CLOCK_GEN7);
+	glamo->regcache[1] = __reg_read(glamo, GLAMO_REG_CLOCK_GEN8);
+	glamo->regcache[2] = __reg_read(glamo, GLAMO_REG_CLOCK_LCD);
+	glamo->regcache[3] = __reg_read(glamo, GLAMO_REG_CLOCK_MMC);
+	
+	dev_info(dev, "saved irq mask = %#x\n", glamo->saved_irq_mask);
+
+	/* take down each engine before we kill mem and pll */
+	for (n = 0; n < __NUM_GLAMO_ENGINES; n++) {
+		if (glamo->engine_state[n] != GLAMO_ENGINE_DISABLED)
+			__glamo_engine_disable(glamo, n);
+	}
+
+	// enable self-refresh 
+	__reg_write(glamo, GLAMO_REG_MEM_DRAM1, 0x7100);
+	__reg_write(glamo, GLAMO_REG_MEM_DRAM1, 0xf100);
+
+	// force RAM into deep powerdown 0x01d6 is CAS latency 
+	__reg_write(glamo, GLAMO_REG_MEM_DRAM2,
+				GLAMO_MEM_DRAM2_DEEP_PWRDOWN | 0x01d6 );
+
+	// disable clocks to memory 
+	__reg_write(glamo, GLAMO_REG_CLOCK_MEMORY, 0);
+
+	// all dividers from OSCI
+	__reg_set_bit_mask(glamo, GLAMO_REG_CLOCK_GEN5_1, 0x400, 0x400);
+
+	// PLL2 into bypass 
+	//__reg_set_bit_mask(glamo, GLAMO_REG_PLL_GEN3, 0x1000, 0x1000);
+
+	__reg_write(glamo, GLAMO_REG_HOSTBUS(1), 0x0e00);
+
+	// kill PLLS 1 then 2 
+	__reg_write(glamo, GLAMO_REG_DFT_GEN5, 0x0001);
+	__reg_set_bit_mask(glamo, GLAMO_REG_PLL_GEN3, 0x2000, 0x2000);
+
+	//spin_unlock(&glamo->lock);
+
+	return 0;
+}
+
+static int glamo_resume(struct device *dev)
+{
+	struct glamo_core *glamo = dev_get_drvdata(dev);
+	int n, pll1, pll2;
+
+	//spin_lock(&glamo->lock);
+
+	/*(glamo->pdata->glamo_external_reset)(0);
+	udelay(10);
+	(glamo->pdata->glamo_external_reset)(1);
+	mdelay(5);
+
+	glamo_run_script(glamo, glamo_init_script,
+			 ARRAY_SIZE(glamo_init_script), 0);*/
+    //glamo_run_script(glamo, glamo_resume_script, ARRAY_SIZE(glamo_resume_script), 0);			 
+	
+	//	Activate PLLs	*/
+    __reg_write(glamo, GLAMO_REG_DFT_GEN6, 0x0001);
+	__reg_set_bit_mask(glamo, GLAMO_REG_PLL_GEN3, 0x2000, 0x0000);
+	
+	__reg_write(glamo, GLAMO_REG_HOSTBUS(1), 0x0e03);
+	
+	__reg_set_bit_mask(glamo, GLAMO_REG_CLOCK_GEN5_1, 0x400, 0x000);
+
+    __reg_write(glamo, GLAMO_REG_CLOCK_MEMORY, 0x000a);
+
+	//	Dram2 out of deep power down
+	__reg_set_bit_mask(glamo, GLAMO_REG_MEM_DRAM2, GLAMO_MEM_DRAM2_DEEP_PWRDOWN, 0x0);
+	//__reg_write(glamo, GLAMO_REG_MEM_DRAM2, 0x01d6 );
+	msleep(1);
+
+	// disable self-refresh
+    __reg_write(glamo, GLAMO_REG_MEM_DRAM1, 0xc100);
+	__reg_write(glamo, GLAMO_REG_MEM_DRAM1, 0xe100);
+
+	__reg_write(glamo, GLAMO_REG_CLOCK_GEN7, glamo->regcache[0]);
+	__reg_write(glamo, GLAMO_REG_CLOCK_GEN8, glamo->regcache[1]);
+	__reg_write(glamo, GLAMO_REG_CLOCK_LCD, glamo->regcache[2]);
+	__reg_write(glamo, GLAMO_REG_CLOCK_MMC, glamo->regcache[3]);
+
+	for (n = 0; n < __NUM_GLAMO_ENGINES; n++) {
+		switch (glamo->engine_state[n]) {
+		case GLAMO_ENGINE_SUSPENDED:
+			__glamo_engine_suspend(glamo, n);
+			break;
+		case GLAMO_ENGINE_ENABLED:
+			__glamo_engine_enable(glamo, n);
+			break;
+		default:
+			break;
+		}
+	}
+
+	__reg_write(glamo, GLAMO_REG_IRQ_ENABLE, glamo->saved_irq_mask);
+
+	//spin_unlock(&glamo->lock);
+
+    if (glamo_check_status(glamo))
+        dev_warn(&glamo->pdev->dev, "warning register state inconsist\n");
+	
+	pll1 = glamo_pll_rate(glamo, GLAMO_PLL1);
+	pll2 = glamo_pll_rate(glamo, GLAMO_PLL2);
+	dev_info(dev, "resume core PLL1: %d%s, PLL2: %d%s\n",
+			HR_FREQ(pll1), HR_FREQ(pll2));
+
+	return 0;
+}
+
+
+static int glamo_check_status(struct glamo_core *glamo)
+{
+	int ret = 0;
+	uint16_t val;
+	const struct glamo_script *line = glamo_check_script;
+	const struct glamo_script *end = line + ARRAY_SIZE(glamo_check_script);
+
+	for (; line < end; ++line) {
+		switch (line->reg) {
+		case GLAMO_SCRIPT_END:
+			return 0;
+		case GLAMO_SCRIPT_WAIT:
+		case GLAMO_SCRIPT_LOCK_PLL:
+			/* spin until PLLs lock */
+			continue;
+/*		case 0x200:
+			__reg_write(glamo, line->reg,
+					reg_0x200[slow_memory & 0x7]);
+			break;*/
+		default:
+		    val = __reg_read(glamo, line->reg);
+			break;
+		}
+		if (val != line->val) {
+		    printk("reg %#.4x is %#.4x not %#.4x\n", line->reg, val, line->val);
+		    ret = 1;
+		}
+	}
+
+	return ret;
+}
+
 /* Find out if we can support this version of the Glamo chip */
 static int __devinit glamo_supported(struct glamo_core *glamo)
 {
@@ -975,6 +1357,7 @@ static int __devinit glamo_probe(struct platform_device *pdev)
 	glamo->pdev = pdev;
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	glamo->irq = platform_get_irq(pdev, 0);
+	glamo->irq_base = platform_get_irq(pdev, 1);
 	glamo->pdata = pdev->dev.platform_data;
 	glamo->slowed_divider = 0xFF;
 
@@ -996,7 +1379,7 @@ static int __devinit glamo_probe(struct platform_device *pdev)
 		goto err_free;
 	}
 
-	irq_base = irq_alloc_descs(glamo->pdata->irq_base, 0, GLAMO_NR_IRQS, 0);
+	irq_base = irq_alloc_descs(glamo->irq_base, 0, GLAMO_NR_IRQS, 0);
 	if (irq_base < 0) {
 		dev_err(&pdev->dev, "Failed to allocate irqs: %d\n", irq_base);
 		goto err_free;
@@ -1034,10 +1417,18 @@ static int __devinit glamo_probe(struct platform_device *pdev)
 	/* debugfs */
 	glamo_init_debugfs(glamo);
 
+	/* assert external reset to clear bad state */
+	glamo->pdata->glamo_external_reset(0);
+	udelay(10);
+	glamo->pdata->glamo_external_reset(1);
+	mdelay(5);
+
 	/* init the chip with canned register set */
 	glamo_run_script(glamo, glamo_init_script,
 			 ARRAY_SIZE(glamo_init_script), 1);
 
+    if (glamo_check_status(glamo))
+        dev_warn(&glamo->pdev->dev, "warning register state inconsistend\n");
 	/*
 	 * finally set the mfd interrupts up
 	 */
@@ -1074,10 +1465,13 @@ static int __devinit glamo_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to add child devices: %d\n", ret);
 		goto err_free_irq;
 	}
+	
+	ret = device_create_file(&pdev->dev, &dev_attr_status);
 
-	dev_info(&glamo->pdev->dev, "Glamo core PLL1: %uHz, PLL2: %uHz\n",
-		 glamo_pll_rate(glamo, GLAMO_PLL1),
-		 glamo_pll_rate(glamo, GLAMO_PLL2));
+	ret = glamo_pll_rate(glamo, GLAMO_PLL1);
+	n = glamo_pll_rate(glamo, GLAMO_PLL2);
+	dev_info(&glamo->pdev->dev, "Glamo core PLL1: %u%s, PLL2: %u%s\n",
+		 HR_FREQ(ret), HR_FREQ(n));
 
 	return 0;
 
@@ -1139,42 +1533,34 @@ static int __devexit glamo_remove(struct platform_device *pdev)
 
 #ifdef CONFIG_PM
 #if 0
-static struct glamo_script glamo_resume_script[] = {
-
-	{ GLAMO_REG_PLL_GEN1,		0x05db },	/* 48MHz */
-	{ GLAMO_REG_PLL_GEN3,		0x0aba },	/* 90MHz */
-	{ GLAMO_REG_DFT_GEN6, 1 },
-		{ 0xfffe, 100 },
-		{ 0xfffd, 0 },
-	{ 0x200,	0x0e03 },
-
-	/*
-	 * b9 of this register MUST be zero to get any interrupts on INT#
-	 * the other set bits enable all the engine interrupt sources
-	 */
-	{ GLAMO_REG_IRQ_ENABLE,		0x01ff },
-	{ GLAMO_REG_CLOCK_HOST,		0x0018 },
-	{ GLAMO_REG_CLOCK_GEN5_1, 0x18b1 },
-
-	{ GLAMO_REG_MEM_DRAM1,		0x0000 },
-		{ 0xfffe, 1 },
-	{ GLAMO_REG_MEM_DRAM1,		0xc100 },
-		{ 0xfffe, 1 },
-	{ GLAMO_REG_MEM_DRAM1,		0xe100 },
-	{ GLAMO_REG_MEM_DRAM2,		0x01d6 },
-	{ GLAMO_REG_CLOCK_MEMORY,	0x000b },
-};
-#endif
-
-#if 0
 static void glamo_power(struct glamo_core *glamo)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&glamo->lock, flags);
+	switch (new_state) {
+	case GLAMO_POWER_ON:
 
-	/*
-Power management
+		/*
+		 * glamo state on resume is nondeterministic in some
+		 * fundamental way, it has also been observed that the
+		 * Glamo reset pin can get asserted by, eg, touching it with
+		 * a scope probe.  So the only answer is to roll with it and
+		 * force an external reset on the Glamo during resume.
+		 */
+
+
+		break;
+
+	case GLAMO_POWER_SUSPEND:
+
+		break;
+	}
+	spin_unlock_irqrestore(&glamo->lock, flags);
+}
+#endif
+
+/* Power management
 static const REG_VALUE_MASK_TYPE reg_powerOn[] =
 {
 	{ REG_GEN_DFT6,	    REG_BIT_ALL,    REG_DATA(1u << 0)		},
@@ -1200,131 +1586,14 @@ static const REG_VALUE_MASK_TYPE reg_powerSuspend[] =
 	{ REG_GEN_DFT5,	    REG_BIT_ALL,    REG_DATA(1u << 0)		}
 };
 */
-	switch (new_state) {
-	case GLAMO_POWER_ON:
 
-		/*
-		 * glamo state on resume is nondeterministic in some
-		 * fundamental way, it has also been observed that the
-		 * Glamo reset pin can get asserted by, eg, touching it with
-		 * a scope probe.  So the only answer is to roll with it and
-		 * force an external reset on the Glamo during resume.
-		 */
-
-
-		break;
-
-	case GLAMO_POWER_SUSPEND:
-
-		break;
-	}
-	spin_unlock_irqrestore(&glamo->lock, flags);
-}
-#endif
-
-static int glamo_suspend(struct device *dev)
-{
-	struct glamo_core *glamo = dev_get_drvdata(dev);
-	int n;
-
-	spin_lock(&glamo->lock);
-
-	glamo->saved_irq_mask = __reg_read(glamo, GLAMO_REG_IRQ_ENABLE);
-
-	/* nuke interrupts */
-	__reg_write(glamo, GLAMO_REG_IRQ_ENABLE, 0x200);
-
-	/* take down each engine before we kill mem and pll */
-	for (n = 0; n < __NUM_GLAMO_ENGINES; n++) {
-		if (glamo->engine_state[n] != GLAMO_ENGINE_DISABLED)
-			__glamo_engine_disable(glamo, n);
-	}
-
-	/* enable self-refresh */
-
-	__reg_write(glamo, GLAMO_REG_MEM_DRAM1,
-				GLAMO_MEM_DRAM1_EN_DRAM_REFRESH |
-				GLAMO_MEM_DRAM1_EN_GATE_CKE |
-				GLAMO_MEM_DRAM1_SELF_REFRESH |
-				GLAMO_MEM_REFRESH_COUNT);
-	__reg_write(glamo, GLAMO_REG_MEM_DRAM1,
-				GLAMO_MEM_DRAM1_EN_MODEREG_SET |
-				GLAMO_MEM_DRAM1_EN_DRAM_REFRESH |
-				GLAMO_MEM_DRAM1_EN_GATE_CKE |
-				GLAMO_MEM_DRAM1_SELF_REFRESH |
-				GLAMO_MEM_REFRESH_COUNT);
-
-	/* force RAM into deep powerdown */
-	__reg_write(glamo, GLAMO_REG_MEM_DRAM2,
-				GLAMO_MEM_DRAM2_DEEP_PWRDOWN |
-				(7 << 6) | /* tRC */
-				(1 << 4) | /* tRP */
-				(1 << 2) | /* tRCD */
-				2); /* CAS latency */
-
-	/* disable clocks to memory */
-	__reg_write(glamo, GLAMO_REG_CLOCK_MEMORY, 0);
-
-	/* all dividers from OSCI */
-	__reg_set_bit_mask(glamo, GLAMO_REG_CLOCK_GEN5_1, 0x400, 0x400);
-
-	/* PLL2 into bypass */
-	__reg_set_bit_mask(glamo, GLAMO_REG_PLL_GEN3, 1 << 12, 1 << 12);
-
-	__reg_write(glamo, GLAMO_BASIC_MMC_EN_TCLK_DLYA1, 0x0e00);
-
-	/* kill PLLS 1 then 2 */
-	__reg_write(glamo, GLAMO_REG_DFT_GEN5, 0x0001);
-	__reg_set_bit_mask(glamo, GLAMO_REG_PLL_GEN3, 1 << 13, 1 << 13);
-
-	spin_unlock(&glamo->lock);
-
-	return 0;
-}
-
-static int glamo_resume(struct device *dev)
-{
-	struct glamo_core *glamo = dev_get_drvdata(dev);
-	int n;
-
-	(glamo->pdata->glamo_external_reset)(0);
-	udelay(10);
-	(glamo->pdata->glamo_external_reset)(1);
-	mdelay(5);
-
-	spin_lock(&glamo->lock);
-
-	glamo_run_script(glamo, glamo_init_script,
-			 ARRAY_SIZE(glamo_init_script), 0);
-
-
-	for (n = 0; n < __NUM_GLAMO_ENGINES; n++) {
-		switch (glamo->engine_state[n]) {
-		case GLAMO_ENGINE_SUSPENDED:
-			__glamo_engine_suspend(glamo, n);
-			break;
-		case GLAMO_ENGINE_ENABLED:
-			__glamo_engine_enable(glamo, n);
-			break;
-		default:
-			break;
-		}
-	}
-
-	__reg_write(glamo, GLAMO_REG_IRQ_ENABLE, glamo->saved_irq_mask);
-
-	spin_unlock(&glamo->lock);
-
-	return 0;
-}
-
-static const struct dev_pm_ops glamo_pm_ops = {
+/*static const struct dev_pm_ops glamo_pm_ops = {
 	.suspend    = glamo_suspend,
 	.resume     = glamo_resume,
 	.poweroff   = glamo_suspend,
 	.restore    = glamo_resume,
-};
-
+};*/
+static SIMPLE_DEV_PM_OPS(glamo_pm_ops, glamo_suspend, glamo_resume);
 #define GLAMO_PM_OPS (&glamo_pm_ops)
 
 #else
