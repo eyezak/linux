@@ -4,9 +4,12 @@
 #ifdef __KERNEL__
 
 #include <linux/fb.h>
+struct drm_display_mode;
 
 struct glamo_fb_platform_data {
     int width, height;
+
+    void (* mode_change)(struct drm_display_mode *mode);
 
     int num_modes;
     struct fb_videomode *modes;

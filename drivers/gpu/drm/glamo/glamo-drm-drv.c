@@ -60,17 +60,17 @@ static int glamo_ioctl_gem_info(struct drm_device *dev, void *data,
 
 
 struct drm_ioctl_desc glamo_ioctls[] = {
-	DRM_IOCTL_DEF(DRM_GLAMO_CMDBUF, glamo_ioctl_cmdbuf, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_SWAP, glamo_ioctl_swap, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_CMDBURST, glamo_ioctl_cmdburst, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_INFO, glamo_ioctl_gem_info, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_CREATE, glamo_ioctl_gem_create, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_MMAP, glamo_ioctl_gem_mmap, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_PIN, glamo_ioctl_gem_pin, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_UNPIN, glamo_ioctl_gem_unpin, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_PREAD, glamo_ioctl_gem_pread, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_PWRITE, glamo_ioctl_gem_pwrite, DRM_AUTH),
-	DRM_IOCTL_DEF(DRM_GLAMO_GEM_WAIT_RENDERING,
+	DRM_IOCTL_DEF_DRV(GLAMO_CMDBUF, glamo_ioctl_cmdbuf, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_SWAP, glamo_ioctl_swap, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_CMDBURST, glamo_ioctl_cmdburst, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_INFO, glamo_ioctl_gem_info, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_CREATE, glamo_ioctl_gem_create, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_MMAP, glamo_ioctl_gem_mmap, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_PIN, glamo_ioctl_gem_pin, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_UNPIN, glamo_ioctl_gem_unpin, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_PREAD, glamo_ioctl_gem_pread, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_PWRITE, glamo_ioctl_gem_pwrite, DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(GLAMO_GEM_WAIT_RENDERING,
 	              glamo_ioctl_wait_rendering, DRM_AUTH),
 };
 
@@ -157,8 +157,19 @@ static struct vm_operations_struct glamodrm_gem_vm_ops = {
 	.close = drm_gem_vm_close,
 };
 
+static const struct file_operations glamodrm_drm_driver_fops = {
+    .owner = THIS_MODULE,
+    .open = drm_open,
+    .release = drm_release,
+    .unlocked_ioctl = drm_ioctl,
+    .mmap = drm_gem_mmap,
+    .poll = drm_poll,
+    .fasync = drm_fasync,
+    /* .lseek = noop_llseek */
+};
+
 static struct drm_driver glamodrm_drm_driver = {
-	.driver_features = DRIVER_IS_PLATFORM | DRIVER_GEM | DRIVER_MODESET,
+	.driver_features = DRIVER_BUS_PLATFORM | DRIVER_GEM | DRIVER_MODESET,
 	.firstopen = glamodrm_firstopen,
 	.load = glamodrm_load,
 	.unload = glamodrm_unload,
@@ -167,23 +178,15 @@ static struct drm_driver glamodrm_drm_driver = {
 	.postclose = glamodrm_postclose,
 	.lastclose = glamodrm_lastclose,
 	.reclaim_buffers = drm_core_reclaim_buffers,
-	.get_map_ofs = drm_core_get_map_ofs,
-	.get_reg_ofs = drm_core_get_reg_ofs,
+	/*.get_map_ofs = drm_core_get_map_ofs,
+	.get_reg_ofs = drm_core_get_reg_ofs,*/
 	.master_create = glamodrm_master_create,
 	.master_destroy = glamodrm_master_destroy,
 	.gem_init_object = glamodrm_gem_init_object,
 	.gem_free_object = glamodrm_gem_free_object,
 	.gem_vm_ops = &glamodrm_gem_vm_ops,
 	.ioctls = glamo_ioctls,
-	.fops = {
-		.owner = THIS_MODULE,
-		.open = drm_open,
-		.release = drm_release,
-		.unlocked_ioctl = drm_ioctl,
-		.mmap = drm_gem_mmap,
-		.poll = drm_poll,
-		.fasync = drm_fasync,
-	},
+	.fops = &glamodrm_drm_driver_fops,
 	.major = 0,
 	.minor = 1,
 	.patchlevel = 0,
@@ -303,9 +306,11 @@ static int glamodrm_probe(struct platform_device *pdev)
 	                 (long long int)gdrm->vram_size);
 
 	/* Initialise DRM */
-	drm_platform_init(&glamodrm_drm_driver, pdev, (void *)gdrm);
+	//drm_platform_init(&glamodrm_drm_driver, pdev, (void *)gdrm);
+	rc = drm_platform_init(&glamodrm_drm_driver, pdev);
+	platform_set_drvdata(pdev, gdrm);
 
-	return 0;
+	return rc;
 
 out_release_2d:
 	release_mem_region(gdrm->twod_regs->start,
@@ -335,7 +340,7 @@ static int glamodrm_remove(struct platform_device *pdev)
 	glamo_buffer_final(gdrm);
 	glamo_cmdq_shutdown(gdrm);
 
-	drm_exit(&glamodrm_drm_driver);
+	drm_platform_exit(&glamodrm_drm_driver, pdev);
 
 	platform_set_drvdata(pdev, NULL);
 

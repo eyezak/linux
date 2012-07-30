@@ -61,7 +61,7 @@
 
 #include <linux/mfd/glamo-core.h>
 #include "glamo-drm-private.h"
-#include <linux/mfd/glamo-regs.h>
+#include "glamo-regs.h"
 #include "glamo-kms-fb.h"
 #include "glamo-display.h"
 
@@ -157,7 +157,7 @@ int glamo_lcd_cmd_mode(struct glamodrm_handle *gdrm, int on)
 
 		/* wait until lcd idle */
 		timeout = 2000000;
-		while ((!reg_read_lcd(gdrm, GLAMO_REG_LCD_STATUS2) & (1 << 12))
+		while ((!(reg_read_lcd(gdrm, GLAMO_REG_LCD_STATUS2) & (1 << 12)))
 		          && (timeout--))
 			/* yield() */;
 		if (timeout < 0) {
@@ -299,12 +299,16 @@ static int glamo_crtc_mode_set(struct drm_crtc *crtc,
 {
 	struct glamodrm_handle *gdrm;
 	struct glamo_crtc *gcrtc;
+	struct glamo_fb_platform_data *fb_info;
 	int retr_start, retr_end, disp_start, disp_end;
 	int rot;
 
 	/* Dig out our handle */
 	gcrtc = to_glamo_crtc(crtc);
 	gdrm = gcrtc->gdrm;	/* Here it is! */
+	
+	/* Dig out the record which will tell us about the hardware */
+	fb_info = gdrm->glamo_core->pdata->fb_data;
 
 	if ( !gcrtc->pixel_clock_on ) {
 		printk(KERN_WARNING "[glamo-drm] Display is off - "
@@ -449,11 +453,14 @@ static int glamo_crtc_mode_set(struct drm_crtc *crtc,
 
 	glamo_crtc_mode_set_base(crtc, 0, 0, old_fb);
 
-	if ( mode->hdisplay == 240 ) {
+	/*if ( mode->hdisplay == 240 ) {
 		jbt6k74_finish_resolutionchange(JBT_RESOLUTION_QVGA);
 	} else {
 		jbt6k74_finish_resolutionchange(JBT_RESOLUTION_VGA);
-	}
+	}*/
+	if (fb_info)
+	    if (fb_info->mode_change)
+        	fb_info->mode_change(mode);
 
 	gcrtc->current_mode = *mode;
 	gcrtc->current_mode_set = 1;
@@ -497,8 +504,8 @@ static int glamo_crtc_cursor_move(struct drm_crtc *crtc, int x, int y)
 }
 
 
-static void glamo_crtc_gamma_set(struct drm_crtc *crtc, u16 *red, u16 *green,
-                                 u16 *blue, uint32_t size)
+static void glamo_crtc_gamma_set(struct drm_crtc *crtc, u16 *r, u16 *g,
+                                 u16 *b, uint32_t start, uint32_t size)
 {
 }
 
@@ -512,7 +519,7 @@ static void glamo_crtc_destroy(struct drm_crtc *crtc)
 
 
 static enum drm_connector_status
-glamo_connector_detect(struct drm_connector *connector)
+glamo_connector_detect(struct drm_connector *connector, bool force)
 {
 	/* One hopes it hasn't been de-soldered... */
 	return connector_status_connected;
@@ -673,7 +680,7 @@ static const struct drm_framebuffer_funcs glamo_fb_funcs = {
 
 
 int glamo_framebuffer_create(struct drm_device *dev,
-			     struct drm_mode_fb_cmd *mode_cmd,
+			     struct drm_mode_fb_cmd2 *mode_cmd,
 			     struct drm_framebuffer **fb,
 			     struct drm_gem_object *obj)
 {
@@ -684,17 +691,19 @@ int glamo_framebuffer_create(struct drm_device *dev,
 	if (!glamo_fb)
 		return -ENOMEM;
 
-	ret = drm_framebuffer_init(dev, &glamo_fb->base, &glamo_fb_funcs);
+	ret = drm_framebuffer_init(dev, &glamo_fb->base2, &glamo_fb_funcs);
 	if (ret) {
-		DRM_ERROR("framebuffer init failed %d\n", ret);
-		return ret;
+        drm_gem_object_unreference_unlocked(obj);
+        
+        DRM_ERROR("framebuffer init failed %d\n", ret);
+        return ret;
 	}
 
-	drm_helper_mode_fill_fb_struct(&glamo_fb->base, mode_cmd);
+	drm_helper_mode_fill_fb_struct(&glamo_fb->base2, mode_cmd);
 
 	glamo_fb->obj = obj;
 
-	*fb = &glamo_fb->base;
+	*fb = &glamo_fb->base2;
 
 	return 0;
 }
@@ -703,15 +712,15 @@ int glamo_framebuffer_create(struct drm_device *dev,
 static struct drm_framebuffer *
 glamo_user_framebuffer_create(struct drm_device *dev,
 			      struct drm_file *filp,
-			      struct drm_mode_fb_cmd *mode_cmd)
+			      struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct drm_gem_object *obj;
 	struct drm_framebuffer *fb;
 	int ret;
 
-	obj = drm_gem_object_lookup(dev, filp, mode_cmd->handle);
+    obj = drm_gem_object_lookup(dev, filp, mode_cmd->handles[0]);
 	if (!obj)
-		return NULL;
+		return ERR_PTR(ENOENT);
 
 	ret = glamo_framebuffer_create(dev, mode_cmd, &fb, obj);
 	if (ret) {
@@ -723,9 +732,10 @@ glamo_user_framebuffer_create(struct drm_device *dev,
 }
 
 
-int glamo_fbchanged(struct drm_device *dev)
+void glamo_fbchanged(struct drm_device *dev)
 {
-	return 0;
+    /* stub TODO: fixme */
+    dev_info(dev->dev, "fb changed\n");
 }
 
 
@@ -786,7 +796,7 @@ static const struct drm_encoder_helper_funcs glamo_encoder_helper_funcs = {
 /* Mode functions */
 static const struct drm_mode_config_funcs glamo_mode_funcs = {
 	.fb_create = glamo_user_framebuffer_create,
-	.fb_changed = glamo_fbchanged
+	.output_poll_changed = glamo_fbchanged,
 };
 
 
@@ -835,6 +845,7 @@ int glamo_display_init(struct drm_device *dev)
 	glamo_run_lcd_script(gdrm, lcd_init_script,
 	                           ARRAY_SIZE(lcd_init_script));
 
+    /*  Initialise our mode   */
 	drm_mode_config_init(dev);
 
 	dev->mode_config.min_width = 240;
@@ -867,26 +878,32 @@ int glamo_display_init(struct drm_device *dev)
 	connector = &glamo_output->base;
 	glamo_output->gdrm = gdrm;
 
-	/* Initialise the connector */
-	drm_connector_init(dev, connector, &glamo_connector_funcs,
-	                   DRM_MODE_CONNECTOR_LVDS);
-	drm_sysfs_connector_add(connector);
-	connector->interlace_allowed = 0;
-	connector->doublescan_allowed = 0;
-
 	/* Initialise the encoder */
 	drm_encoder_init(dev, &glamo_output->enc, &glamo_encoder_funcs,
 	                 DRM_MODE_ENCODER_DAC);
 	glamo_output->enc.possible_crtcs = 1 << 0;
+    drm_encoder_helper_add(&glamo_output->enc, &glamo_encoder_helper_funcs);
+
+	/* Initialise the connector */
+	drm_connector_init(dev, connector, &glamo_connector_funcs,
+	                   DRM_MODE_CONNECTOR_LVDS);
+	drm_connector_helper_add(connector, &glamo_connector_helper_funcs);
+	connector->interlace_allowed = 0;
+	connector->doublescan_allowed = 0;
+	drm_sysfs_connector_add(connector);
 	drm_mode_connector_attach_encoder(&glamo_output->base,
 	                                  &glamo_output->enc);
 
-	drm_encoder_helper_add(&glamo_output->enc, &glamo_encoder_helper_funcs);
-	drm_connector_helper_add(connector, &glamo_connector_helper_funcs);
+	//drm_helper_initial_config(dev);
+	//glamo_fb->h.funcs = &glamo_fb_helper_funcs;
+	drm_fb_helper_init(dev, &glamo_fb->base, 1, glamo_output->enc.possible_crtcs);
+	drm_fb_helper_single_add_all_connectors(&glamo_fb->base);
+	drm_fb_helper_initial_config(&glamo_fb->base, 32);
+	
+	drm_kms_helper_poll_init(dev);
+	drm_vblank_init(dev, 1);
 
-	drm_helper_initial_config(dev);
-
-	if (list_empty(&dev->mode_config.fb_kernel_list)) {
+	if (list_empty(&dev->mode_config.fb_list)) {
 		int ret, cols, cols_g;
 		cols_g = reg_read_lcd(gdrm, GLAMO_REG_LCD_MODE3) & 0xc000;
 		switch ( cols_g ) {
@@ -908,13 +925,14 @@ int glamo_display_init(struct drm_device *dev)
 	par = info->par;
 
 	modeset = &glamo_crtc->mode_set;
-	modeset->fb = &glamo_fb->base;
+	modeset->fb = &glamo_fb->base2;
+	glamo_crtc->fb_helper = &glamo_fb->base;
 	modeset->connectors[0] = connector;
 
 	par->crtc_ids[0] = glamo_crtc->base.base.id;
 
 	modeset->num_connectors = 1;
-	modeset->mode = modeset->crtc->desired_mode;
+	modeset->mode = &modeset->crtc->mode;
 
 	par->crtc_count = 1;
 
@@ -942,7 +960,9 @@ void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode)
 		printk(KERN_CRIT "Power on sequence\n");
 		glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 		gcrtc->pixel_clock_on = 1;
-		jbt6k74_setpower(JBT_POWER_MODE_NORMAL);
+		if (gdrm->glamo_core->pdata->fb_data->mode_change)
+		    gdrm->glamo_core->pdata->fb_data->mode_change(&gcrtc->current_mode);
+		//jbt6k74_setpower(JBT_POWER_MODE_NORMAL);
 		if ( gcrtc->current_mode_set ) {
 			printk(KERN_CRIT "Setting previous mode\n");
 			glamo_crtc_mode_set(crtc, &gcrtc->current_mode,
@@ -951,7 +971,9 @@ void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode)
 		}
 	} else {
 		printk(KERN_CRIT "Power off sequence\n");
-		jbt6k74_setpower(JBT_POWER_MODE_OFF);
+		//jbt6k74_setpower(JBT_POWER_MODE_OFF);
+		if (gdrm->glamo_core->pdata->fb_data->mode_change)
+		    gdrm->glamo_core->pdata->fb_data->mode_change(NULL);
 		glamo_engine_suspend(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 		gcrtc->pixel_clock_on = 0;
 	}

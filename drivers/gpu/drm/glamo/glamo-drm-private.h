@@ -34,6 +34,8 @@
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 
+#include <drm/drm_fb_helper.h>
+
 #include <linux/mfd/glamo-core.h>
 
 
@@ -133,11 +135,13 @@ struct glamo_crtc {
 	int current_mode_set;
 	struct drm_display_mode current_mode;
 	struct drm_framebuffer *current_fb;
+	struct drm_fb_helper *fb_helper;
 };
 
 
 struct glamo_framebuffer {
-	struct drm_framebuffer base;
+    struct drm_fb_helper  base;    
+	struct drm_framebuffer base2;
 	struct drm_gem_object *obj;
 };
 
@@ -160,7 +164,7 @@ enum {
 #define to_glamo_crtc(x) container_of(x, struct glamo_crtc, base)
 #define to_glamo_output(x) container_of(x, struct glamo_output, base)
 #define enc_to_glamo_output(x) container_of(x, struct glamo_output, enc)
-#define to_glamo_framebuffer(x) container_of(x, struct glamo_framebuffer, base)
+#define to_glamo_framebuffer(x) container_of(x, struct glamo_framebuffer, base2)
 
 
 #endif /* __GLAMO_DRMPRIV_H */

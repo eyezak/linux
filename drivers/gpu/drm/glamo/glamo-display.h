@@ -29,7 +29,7 @@
 extern int glamo_display_init(struct drm_device *dev);
 
 extern int glamo_framebuffer_create(struct drm_device *dev,
-                                    struct drm_mode_fb_cmd *mode_cmd,
+                                    struct drm_mode_fb_cmd2 *mode_cmd,
                                     struct drm_framebuffer **fb,
                                     struct drm_gem_object *obj);
 

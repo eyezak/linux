@@ -56,7 +56,7 @@
 
 #include <linux/mfd/glamo-core.h>
 #include "glamo-drm-private.h"
-#include <linux/mfd/glamo-regs.h>
+#include "glamo-regs.h"
 #include "glamo-buffer.h"
 
 
@@ -463,7 +463,7 @@ int glamo_cmdq_setup(struct glamodrm_handle *gdrm)
 {
 	unsigned int i;
 
-	init_MUTEX(&gdrm->add_to_ring);
+	sema_init(&gdrm->add_to_ring, 1);
 
 	/* Enable 2D */
 	glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_2D);

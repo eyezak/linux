@@ -102,18 +102,18 @@ static int glamofb_setcolreg(unsigned regno, unsigned red, unsigned green,
 		if (regno < 16) {
 			switch (fb->depth) {
 			case 15:
-				fb->pseudo_palette[regno] = ((red & 0xf800) >> 1) |
+				glamo_crtc->fb_helper->pseudo_palette[regno] = ((red & 0xf800) >> 1) |
 					((green & 0xf800) >>  6) |
 					((blue & 0xf800) >> 11);
 				break;
 			case 16:
-				fb->pseudo_palette[regno] = (red & 0xf800) |
+				glamo_crtc->fb_helper->pseudo_palette[regno] = (red & 0xf800) |
 					((green & 0xfc00) >>  5) |
 					((blue  & 0xf800) >> 11);
 				break;
 			case 24:
 			case 32:
-				fb->pseudo_palette[regno] = ((red & 0xff00) << 8) |
+				glamo_crtc->fb_helper->pseudo_palette[regno] = ((red & 0xff00) << 8) |
 					(green & 0xff00) |
 					((blue  & 0xff00) >> 8);
 				break;
@@ -128,7 +128,7 @@ static int glamofb_check_var(struct fb_var_screeninfo *var,
 {
 	struct glamofb_par *par = info->par;
 	struct glamo_framebuffer *glamo_fb = par->glamo_fb;
-	struct drm_framebuffer *fb = &glamo_fb->base;
+	struct drm_framebuffer *fb = &glamo_fb->base2;
 	int depth;
 
 	/* Need to resize the fb object !!! */
@@ -316,10 +316,10 @@ int glamofb_create(struct drm_device *dev, uint32_t fb_width,
 	struct glamofb_par *par;
 	struct drm_framebuffer *fb;
 	struct glamo_framebuffer *glamo_fb;
-	struct drm_mode_fb_cmd mode_cmd;
+	struct drm_mode_fb_cmd2 mode_cmd;
 	struct drm_gem_object *fbo = NULL;
 	struct drm_glamo_gem_object *gobj;
-	struct device *device = &dev->platform_dev->dev;
+	struct device *device = dev->dev;
 	struct glamodrm_handle *gdrm;
 	int size, ret;
 	unsigned long offs;
@@ -329,11 +329,10 @@ int glamofb_create(struct drm_device *dev, uint32_t fb_width,
 	mode_cmd.width = surface_width;
 	mode_cmd.height = surface_height;
 
-	mode_cmd.bpp = 16;
-	mode_cmd.pitch = ALIGN(mode_cmd.width * ((mode_cmd.bpp + 1) / 8), 64);
-	mode_cmd.depth = 16;
+	mode_cmd.pixel_format = DRM_FORMAT_RGB565;
+	mode_cmd.pitches[0] = ALIGN(mode_cmd.width * ((16 + 1) / 8), 64);
 
-	size = mode_cmd.pitch * mode_cmd.height;
+	size = mode_cmd.pitches[0] * mode_cmd.height;
 	size = ALIGN(size, PAGE_SIZE);
 	if ( size > GLAMO_FRAMEBUFFER_ALLOCATION ) {
 		printk(KERN_ERR "[glamo-drm] Not enough memory for fb\n");
@@ -356,7 +355,7 @@ int glamofb_create(struct drm_device *dev, uint32_t fb_width,
 		goto out_unref;
 	}
 
-	list_add(&fb->filp_head, &dev->mode_config.fb_kernel_list);
+	list_add(&fb->filp_head, &dev->mode_config.fb_list);
 
 	glamo_fb = to_glamo_framebuffer(fb);
 	*glamo_fb_p = glamo_fb;
@@ -382,7 +381,7 @@ int glamofb_create(struct drm_device *dev, uint32_t fb_width,
 
 	info->fbops = &glamofb_ops;
 
-	info->fix.line_length = fb->pitch;
+	info->fix.line_length = fb->pitches[0];
 
 	info->flags = FBINFO_DEFAULT;
 
@@ -398,7 +397,7 @@ int glamofb_create(struct drm_device *dev, uint32_t fb_width,
 	info->fix.smem_len = size;
 	info->screen_size = size;
 
-	info->pseudo_palette = fb->pseudo_palette;
+	info->pseudo_palette = glamo_fb->base.pseudo_palette;
 	info->var.xres_virtual = fb->width;
 	info->var.yres_virtual = fb->height;
 	info->var.bits_per_pixel = fb->bits_per_pixel;
@@ -461,7 +460,7 @@ int glamofb_create(struct drm_device *dev, uint32_t fb_width,
 		return -EINVAL;
 	}
 
-	fb->fbdev = info;
+	glamo_fb->base.fbdev = info;
 	par->glamo_fb = glamo_fb;
 	par->dev = dev;
 	gdrm->fb = info;
@@ -469,7 +468,7 @@ int glamofb_create(struct drm_device *dev, uint32_t fb_width,
 	info->var.pixclock = -1;
 
 	printk(KERN_INFO "[glamo-drm] Allocated %dx%d fb: bo %p\n",
-	       glamo_fb->base.width, glamo_fb->base.height, fbo);
+	       glamo_fb->base2.width, glamo_fb->base2.height, fbo);
 	mutex_unlock(&dev->struct_mutex);
 	return 0;
 
