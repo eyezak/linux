@@ -1451,8 +1451,8 @@ static int __devinit glamo_probe(struct platform_device *pdev)
 		goto err_free_irqs;
 	}
 
-	//glamo_cells[GLAMO_CELL_FB].platform_data = glamo->pdata->fb_data;
-	//glamo_cells[GLAMO_CELL_FB].pdata_size = sizeof(glamo->pdata->fb_data);
+	glamo_cells[GLAMO_CELL_FB].platform_data = glamo->pdata->fb_data;
+	glamo_cells[GLAMO_CELL_FB].pdata_size = sizeof(glamo->pdata->fb_data);
 	glamo_cells[GLAMO_CELL_MMC].platform_data = glamo->pdata->mmc_data;
 	glamo_cells[GLAMO_CELL_MMC].pdata_size = sizeof(glamo->pdata->mmc_data);
 	glamo_cells[GLAMO_CELL_GPIO].platform_data = glamo->pdata->gpio_data;

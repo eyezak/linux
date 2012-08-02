@@ -121,96 +121,13 @@ static void glamodrm_master_destroy(struct drm_device *dev,
 	DRM_DEBUG("\n");
 }
 
-
-static int glamodrm_load(struct drm_device *dev, unsigned long flags)
+static int glamodrm_platform_load(struct drm_device *dev, struct glamodrm_handle *gdrm)
 {
-	struct glamodrm_handle *gdrm;
-	gdrm = dev->dev_private;
-
-	glamo_buffer_init(gdrm);
-	glamo_cmdq_init(dev);
-	glamo_fence_init(gdrm);
-	glamo_display_init(dev);
-
-	return 0;
-}
-
-
-static int glamodrm_unload(struct drm_device *dev)
-{
-	struct glamodrm_handle *gdrm;
-
-	gdrm = dev->dev_private;
-
-	glamo_engine_disable(gdrm->glamo_core, GLAMO_ENGINE_2D);
-	glamo_engine_disable(gdrm->glamo_core, GLAMO_ENGINE_3D);
-	glamo_buffer_final(gdrm);
-	glamo_fence_shutdown(gdrm);
-
-	return 0;
-}
-
-
-static struct vm_operations_struct glamodrm_gem_vm_ops = {
-	.fault = glamodrm_gem_fault,
-	.open = drm_gem_vm_open,
-	.close = drm_gem_vm_close,
-};
-
-static const struct file_operations glamodrm_drm_driver_fops = {
-    .owner = THIS_MODULE,
-    .open = drm_open,
-    .release = drm_release,
-    .unlocked_ioctl = drm_ioctl,
-    .mmap = drm_gem_mmap,
-    .poll = drm_poll,
-    .fasync = drm_fasync,
-    /* .lseek = noop_llseek */
-};
-
-static struct drm_driver glamodrm_drm_driver = {
-	.driver_features = DRIVER_BUS_PLATFORM | DRIVER_GEM | DRIVER_MODESET,
-	.firstopen = glamodrm_firstopen,
-	.load = glamodrm_load,
-	.unload = glamodrm_unload,
-	.open = glamodrm_open,
-	.preclose = glamodrm_preclose,
-	.postclose = glamodrm_postclose,
-	.lastclose = glamodrm_lastclose,
-	.reclaim_buffers = drm_core_reclaim_buffers,
-	/*.get_map_ofs = drm_core_get_map_ofs,
-	.get_reg_ofs = drm_core_get_reg_ofs,*/
-	.master_create = glamodrm_master_create,
-	.master_destroy = glamodrm_master_destroy,
-	.gem_init_object = glamodrm_gem_init_object,
-	.gem_free_object = glamodrm_gem_free_object,
-	.gem_vm_ops = &glamodrm_gem_vm_ops,
-	.ioctls = glamo_ioctls,
-	.fops = &glamodrm_drm_driver_fops,
-	.major = 0,
-	.minor = 1,
-	.patchlevel = 0,
-	.name = DRIVER_NAME,
-	.desc = DRIVER_DESC,
-	.date = DRIVER_DATE,
-};
-
-
-static int glamodrm_probe(struct platform_device *pdev)
-{
+	struct platform_device *pdev = to_platform_device(dev->dev);
 	int rc;
-	struct glamodrm_handle *gdrm;
-	struct glamo_core *core = dev_get_drvdata(pdev->dev.parent);
-
-	printk(KERN_INFO "[glamo-drm] SMedia Glamo Direct Rendering Support\n");
-
-	gdrm = kzalloc(sizeof(*gdrm), GFP_KERNEL);
-	if ( !gdrm )
-		return -ENOMEM;
-	platform_set_drvdata(pdev, gdrm);
-	gdrm->glamo_core = core;
-	gdrm->dev = &pdev->dev;
-
+	
+	gdrm->vram_size = GLAMO_FB_SIZE;
+	
 	/* Find the command queue registers */
 	gdrm->reg = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 	                                         "glamo-cmdq-regs");
@@ -300,17 +217,8 @@ static int glamodrm_probe(struct platform_device *pdev)
 
 	/* Hook up IRQ handle for fence processing */
 	gdrm->twod_irq = platform_get_irq_byname(pdev, "glamo-2d-irq");
-
-	gdrm->vram_size = GLAMO_FB_SIZE;
-	printk(KERN_INFO "[glamo-drm] %lli bytes of VRAM\n",
-	                 (long long int)gdrm->vram_size);
-
-	/* Initialise DRM */
-	//drm_platform_init(&glamodrm_drm_driver, pdev, (void *)gdrm);
-	rc = drm_platform_init(&glamodrm_drm_driver, pdev);
-	platform_set_drvdata(pdev, gdrm);
-
-	return rc;
+	
+	return 0;
 
 out_release_2d:
 	release_mem_region(gdrm->twod_regs->start,
@@ -330,6 +238,128 @@ out_free:
 	kfree(gdrm);
 	dev_set_drvdata(&pdev->dev, NULL);
 	return rc;
+}
+
+static int glamodrm_load(struct drm_device *dev, unsigned long flags)
+{
+	struct glamodrm_handle *gdrm;
+	int ret;
+	
+	gdrm = kzalloc(sizeof(*gdrm), GFP_KERNEL);
+	if (!gdrm) {
+		dev_err(dev->dev, "gdrm is NULL\n");
+		return -ENODEV;
+	}
+	dev->dev_private = gdrm;
+	gdrm->glamo_core = dev_get_drvdata(dev->dev->parent);
+	gdrm->dev = dev;
+	printk(KERN_INFO "[glamo-drm] SMedia Glamo 3362 <load>\n");
+	
+	ret = glamodrm_platform_load(dev, gdrm);
+	if (ret)
+		goto err;
+	printk(KERN_INFO "[glamo-drm] %lli bytes of VRAM\n",
+	                 (long long int)gdrm->vram_size);
+
+	ret = glamo_buffer_init(dev);
+	if (ret)
+		goto err;
+	
+	ret = glamo_cmdq_init(dev);
+	if (ret)
+		goto buffer_err;
+	
+	glamo_fence_init(gdrm);
+	
+	ret = glamo_display_init(dev);
+	if (ret)
+		goto fence_err;
+	
+
+	drm_kms_helper_poll_init(dev);
+	/*ret = drm_vblank_init(dev, 1);
+	if (ret)
+	    dev_warn(dev->dev, "could not init vblank\n");*/
+
+	return 0;
+
+fence_err:
+	glamo_fence_shutdown(gdrm);
+buffer_err:
+	glamo_buffer_final(gdrm);
+err:
+	return ret;
+}
+
+
+static int glamodrm_unload(struct drm_device *dev)
+{
+	struct glamodrm_handle *gdrm;
+
+	gdrm = dev->dev_private;
+
+	glamo_engine_disable(gdrm->glamo_core, GLAMO_ENGINE_2D);
+	glamo_engine_disable(gdrm->glamo_core, GLAMO_ENGINE_3D);
+	glamo_buffer_final(gdrm);
+	glamo_fence_shutdown(gdrm);
+
+	return 0;
+}
+
+
+static struct vm_operations_struct glamodrm_gem_vm_ops = {
+	.fault = glamodrm_gem_fault,
+	.open = drm_gem_vm_open,
+	.close = drm_gem_vm_close,
+};
+
+static const struct file_operations glamodrm_drm_driver_fops = {
+    .owner = THIS_MODULE,
+    .open = drm_open,
+    .release = drm_release,
+    .unlocked_ioctl = drm_ioctl,
+    .mmap = drm_gem_mmap,
+    .poll = drm_poll,
+    .fasync = drm_fasync,
+    .llseek = noop_llseek,
+};
+
+static struct drm_driver glamodrm_drm_driver = {
+	.driver_features = DRIVER_BUS_PLATFORM | DRIVER_GEM | DRIVER_MODESET
+	                   , //DRIVER_HAVE_IRQ,
+	.firstopen = glamodrm_firstopen,
+	.load = glamodrm_load,
+	.unload = glamodrm_unload,
+	.open = glamodrm_open,
+	.preclose = glamodrm_preclose,
+	.postclose = glamodrm_postclose,
+	.lastclose = glamodrm_lastclose,
+	.reclaim_buffers = drm_core_reclaim_buffers,
+	/*.get_map_ofs = drm_core_get_map_ofs,
+	.get_reg_ofs = drm_core_get_reg_ofs,*/
+	.master_create = glamodrm_master_create,
+	.master_destroy = glamodrm_master_destroy,
+	.gem_init_object = glamodrm_gem_init_object,
+	.gem_free_object = glamodrm_gem_free_object,
+	.gem_vm_ops = &glamodrm_gem_vm_ops,
+	.ioctls = glamo_ioctls,
+	.num_ioctls = ARRAY_SIZE(glamo_ioctls),
+	.fops = &glamodrm_drm_driver_fops,
+	.major = 0,
+	.minor = 1,
+	.patchlevel = 0,
+	.name = DRIVER_NAME,
+	.desc = DRIVER_DESC,
+	.date = DRIVER_DATE,
+};
+
+
+static int glamodrm_probe(struct platform_device *pdev)
+{
+	printk(KERN_INFO "[glamo-drm] <probe>\n");
+
+	/* Initialise DRM */
+	return drm_platform_init(&glamodrm_drm_driver, pdev);
 }
 
 

@@ -22,34 +22,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
  * MA 02111-1307 USA
  *
- *
- * Based on intel_fb.c from drivers/gpu/drm/i915
- *  to which the following licence applies:
- *
- * Copyright © 2006-2007 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- *
- * Authors:
- *	Eric Anholt <eric@anholt.net>
- *
  */
 
 
@@ -59,9 +31,13 @@
 #include <drm/drm_crtc.h>
 
 #include <linux/mfd/glamo-core.h>
+#include <linux/glamofb.h>
 #include "glamo-drm-private.h"
 #include "glamo-display.h"
 #include "glamo-buffer.h"
+#include "glamo-regs.h"
+
+extern int reg_read_lcd(struct glamodrm_handle *gdrm, u_int16_t reg);
 
 
 struct glamofb_par {
@@ -86,7 +62,14 @@ static int glamofb_setcolreg(unsigned regno, unsigned red, unsigned green,
 	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
 		struct glamo_crtc *glamo_crtc = to_glamo_crtc(crtc);
 		struct drm_mode_set *modeset = &glamo_crtc->mode_set;
-		struct drm_framebuffer *fb = modeset->fb;
+		struct drm_framebuffer *fb = glamo_crtc->fb_helper->fb; //modeset->fb;
+		
+		if (!fb) {
+			DRM_DEBUG("modeset: fb = %p | %p, crtc = %p, mode = %p, <%u,%u>, %p, [%u]\n",
+		          modeset->fb, crtc->fb, modeset->crtc, modeset->mode,
+		          modeset->x, modeset->y, modeset->connectors, modeset->num_connectors);
+		    return -ENODEV;
+		}
 
 		for (i = 0; i < par->crtc_count; i++)
 			if (crtc->base.id == par->crtc_ids[i])
@@ -131,6 +114,7 @@ static int glamofb_check_var(struct fb_var_screeninfo *var,
 	struct drm_framebuffer *fb = &glamo_fb->fb;
 	int depth;
 
+	DRM_DEBUG("\n");
 	/* Need to resize the fb object !!! */
 	if (var->xres > fb->width || var->yres > fb->height) {
 		DRM_ERROR("Cannot resize framebuffer object (%dx%d > %dx%d)\n",
@@ -176,13 +160,13 @@ static int glamofb_set_par(struct fb_info *info)
 	struct glamofb_par *par = info->par;
 	struct drm_device *dev = par->dev;
 	struct fb_var_screeninfo *var = &info->var;
-	int i;
+	struct drm_fb_helper *fb_helper = &par->glamo_fb->base;
 	struct drm_crtc *crtc;
-	int ret;
+	int ret, i, found = 0;
 
 	DRM_DEBUG("%d %d\n", var->xres, var->pixclock);
 
-	if (var->pixclock != -1) {
+	if (var->pixclock != 0) {
 		DRM_ERROR("Warning: userspace gave me a pixel clock value (%i)"
 		          "- I'm ignoring it.\n", var->pixclock);
 	}
@@ -190,20 +174,75 @@ static int glamofb_set_par(struct fb_info *info)
 	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
 		struct glamo_crtc *glamo_crtc = to_glamo_crtc(crtc);
 
-		for (i = 0; i < par->crtc_count; i++)
-			if (crtc->base.id == par->crtc_ids[i])
+		for (i = 0; i < par->crtc_count; i++) {
+/*			if (crtc->base.id == par->crtc_ids[i])
 				break;
 
 		if (i == par->crtc_count)
-			continue;
+			continue;*/
 
 		if (crtc->fb == glamo_crtc->mode_set.fb) {
 			mutex_lock(&dev->mode_config.mutex);
+			crtc->fb = fb_helper->fb;
 			ret = crtc->funcs->set_config(&glamo_crtc->mode_set);
 			mutex_unlock(&dev->mode_config.mutex);
 			if (ret)
 				return ret;
+			found = 1;
 		}
+		}
+	}
+
+	if (!found)	
+		return 0;
+
+	DRM_DEBUG("fb found\n");
+	if (fb_helper->delayed_hotplug) {
+		fb_helper->delayed_hotplug = false;
+		drm_fb_helper_hotplug_event(fb_helper);
+	}
+	return 0;
+}
+
+/* this will let fbcon do the mode init */
+int glamofb_helper_set_par(struct fb_info *info)
+{
+	struct glamofb_par *par = info->par;
+	struct drm_device *dev = par->dev;
+	struct drm_fb_helper *fb_helper = &par->glamo_fb->base;
+	struct drm_crtc *crtc;
+	struct drm_mode_set *modeset;
+	int ret;
+	int i;
+
+	DRM_DEBUG("%d: %p %p\n", info->var.pixclock, dev, &dev->mode_config);
+	if (info->var.pixclock != 0) {
+		DRM_ERROR("PIXEL CLOCK SET\n");
+		return -EINVAL;
+	}
+
+	mutex_lock(&dev->mode_config.mutex);
+	for (i = 0; i < fb_helper->crtc_count; i++) {
+	
+		modeset = &fb_helper->crtc_info[i].mode_set;
+		crtc = modeset->crtc;
+		DRM_DEBUG("modeset: fb = %p, crtc = %p, mode = %p, <%u,%u>, %p, [%u], dpms = %p\n",
+		          modeset->fb, modeset->crtc, modeset->mode,
+		          modeset->x, modeset->y, modeset->connectors, modeset->num_connectors,
+		          modeset->connectors[0]->funcs->dpms);
+		
+		crtc->fb = modeset->fb;
+		ret = crtc->funcs->set_config(&fb_helper->crtc_info[i].mode_set);
+		if (ret) {
+			mutex_unlock(&dev->mode_config.mutex);
+			return ret;
+		}
+	}
+	mutex_unlock(&dev->mode_config.mutex);
+
+	if (fb_helper->delayed_hotplug) {
+		fb_helper->delayed_hotplug = false;
+		drm_fb_helper_hotplug_event(fb_helper);
 	}
 	return 0;
 }
@@ -290,7 +329,7 @@ static int glamofb_blank(int blank, struct fb_info *info)
 static struct fb_ops glamofb_ops = {
 	.owner = THIS_MODULE,
 	.fb_check_var = glamofb_check_var,
-	.fb_set_par = glamofb_set_par,
+	.fb_set_par = glamofb_helper_set_par, // drm_fb_helper_set_par,
 	.fb_setcolreg = glamofb_setcolreg,
 	.fb_fillrect = cfb_fillrect,
 	.fb_copyarea = cfb_copyarea,
@@ -302,185 +341,6 @@ static struct fb_ops glamofb_ops = {
 
 #define RESSIZE(ressource) (((ressource)->end - (ressource)->start)+1)
 
-
-/* Here, we create a GEM object of the correct size, and then turn it into
- * /dev/fbX so that the kernel can put a console on it. */
-int glamofb_create(struct drm_fb_helper *helper, struct drm_fb_helper_surface_size * sizes,
-                   u32 format, struct glamo_framebuffer **glamo_fb_p)
-{
-	struct glamodrm_handle *gdrm = dev->dev_private;
-	
-	struct glamofb_par *par;
-	struct drm_framebuffer *fb;
-	struct glamo_framebuffer *glamo_fb;
-	
-	struct drm_gem_object *fbo = NULL;
-	struct drm_glamo_gem_object *gobj;
-	
-	struct fb_info *info;
-	struct drm_mode_fb_cmd2 mode_cmd = {0};
-	
-	int size, ret;
-	unsigned long offs;
-	
-	printk(KERN_INFO "[glamo-drm] <glamofb_create>: %dx%d@%d (%dx%d)", sizes->surface_width,
-	         sizes->surface_height, sizes->surface_bpp, sizes->fb_width, sizes->fb_height);
-
-	mode_cmd.width = sizes->surface_width;
-	mode_cmd.height = sizes->surface_height;
-
-	//	TODO: implement glamo_lcd_get_format and use it here
-	mode_cmd.pixel_format = format;
-	mode_cmd.pitches[0] = ALIGN(mode_cmd.width * ((16 + 1) / 8), 64);
-
-	size = mode_cmd.pitches[0] * mode_cmd.height;
-	size = ALIGN(size, PAGE_SIZE);
-	if ( size > GLAMO_FRAMEBUFFER_ALLOCATION ) {
-		printk(KERN_ERR "[glamo-drm] Not enough memory for fb\n");
-		ret = -ENOMEM;
-		goto out;
-	}
-	fbo = glamo_gem_object_alloc(helper->dev, GLAMO_FRAMEBUFFER_ALLOCATION, 2);
-	if (!fbo) {
-		printk(KERN_ERR "[glamo-drm] Failed to allocate framebuffer\n");
-		ret = -ENOMEM;
-		goto out;
-	}
-	gobj = fbo->driver_private;
-
-	mutex_lock(&helper->dev->struct_mutex);
-
-	ret = glamo_framebuffer_create(dev, &mode_cmd, &fb, fbo);
-	if (ret) {
-		DRM_ERROR("failed to allocate fb.\n");
-		goto out_unref;
-	}
-
-	//list_add(&fb->filp_head, &dev->mode_config.fb_list);
-
-	glamo_fb = to_glamo_framebuffer(fb);
-	*glamo_fb_p = glamo_fb;
-
-	info = framebuffer_alloc(sizeof(struct glamofb_par), helper->dev->dev);
-	if (!info) {
-		ret = -ENOMEM;
-		goto out_unref;
-	}
-
-	par = info->par;
-
-	strcpy(info->fix.id, "glamodrmfb");
-	info->fix.type = FB_TYPE_PACKED_PIXELS;
-	info->fix.visual = FB_VISUAL_TRUECOLOR;
-	info->fix.type_aux = 0;
-	info->fix.xpanstep = 1; /* doing it in hw */
-	info->fix.ypanstep = 1; /* doing it in hw */
-	info->fix.ywrapstep = 0;
-	info->fix.accel = FB_ACCEL_GLAMO;
-	info->fix.type_aux = 0;
-	info->flags = FBINFO_DEFAULT;
-
-	info->fbops = &glamofb_ops;
-
-	info->fix.line_length = fb->pitches[0];
-
-	info->flags = FBINFO_DEFAULT;
-
-	offs = gobj->block->start;
-	info->screen_base = ioremap(gdrm->vram->start + offs + GLAMO_OFFSET_FB,
-	                            GLAMO_FRAMEBUFFER_ALLOCATION);
-	if (!info->screen_base) {
-		printk(KERN_ERR "[glamo-drm] Couldn't map framebuffer!\n");
-		ret = -ENOSPC;
-		goto out_unref;
-	}
-	info->fix.smem_start = (unsigned long)gdrm->vram->start + offs;
-	info->fix.smem_len = size;
-	info->screen_size = size;
-
-	info->pseudo_palette = glamo_fb->base.pseudo_palette;
-	info->var.xres_virtual = fb->width;
-	info->var.yres_virtual = fb->height;
-	info->var.bits_per_pixel = fb->bits_per_pixel;
-	info->var.xoffset = 0;
-	info->var.yoffset = 0;
-	info->var.activate = FB_ACTIVATE_NOW;
-	info->var.height = -1;
-	info->var.width = -1;
-	info->var.xres = sizes->fb_width;
-	info->var.yres = sizes->fb_height;
-
-	info->fix.mmio_start = 0;
-	info->fix.mmio_len = 0;
-
-	info->pixmap.size = 64*1024;
-	info->pixmap.buf_align = 8;
-	info->pixmap.access_align = 32;
-	info->pixmap.flags = FB_PIXMAP_SYSTEM;
-	info->pixmap.scan_align = 1;
-
-	switch (fb->depth) {
-	case 16:
-		switch ( format ) {
-		case DRM_FORMAT_RGB565:
-			info->var.red.offset	= 11;
-			info->var.green.offset	= 5;
-			info->var.blue.offset	= 0;
-			info->var.red.length	= 5;
-			info->var.green.length	= 6;
-			info->var.blue.length	= 5;
-			info->var.transp.length	= 0;
-			break;
-		case DRM_FORMAT_ARGB1555:
-			info->var.transp.offset	= 15;
-			info->var.red.offset	= 10;
-			info->var.green.offset	= 5;
-			info->var.blue.offset	= 0;
-			info->var.transp.length	= 1;
-			info->var.red.length	= 5;
-			info->var.green.length	= 5;
-			info->var.blue.length	= 5;
-			break;
-		case DRM_FORMAT_ARGB4444:
-			info->var.transp.offset	= 12;
-			info->var.red.offset	= 8;
-			info->var.green.offset	= 4;
-			info->var.blue.offset	= 0;
-			info->var.transp.length	= 4;
-			info->var.red.length	= 4;
-			info->var.green.length	= 4;
-			info->var.blue.length	= 4;
-			break;
-		}
-		break;
-	case 24:
-	case 32:
-	default:
-		/* The Smedia Glamo doesn't support anything but 16bit color */
-		printk(KERN_ERR "[glamo-drm] Only 16bpp is supported.\n");
-		return -EINVAL;
-	}
-
-	glamo_fb->base.fbdev = info;
-	par->glamo_fb = glamo_fb;
-	par->dev = helper->dev;
-	gdrm->fb = info;
-
-	info->var.pixclock = -1;
-
-	printk(KERN_INFO "[glamo-drm] Allocated %dx%d fb: bo %p\n",
-	       glamo_fb->fb.width, glamo_fb->fb.height, fbo);
-	mutex_unlock(&dev->struct_mutex);
-	return 0;
-
-out_unref:
-	drm_gem_object_unreference(fbo);
-	mutex_unlock(&dev->struct_mutex);
-out:
-	return ret;
-}
-
-
 void glamo_kmsfb_suspend(struct glamodrm_handle *gdrm)
 {
 	fb_set_suspend(gdrm->fb, 1);
@@ -490,4 +350,186 @@ void glamo_kmsfb_suspend(struct glamodrm_handle *gdrm)
 void glamo_kmsfb_resume(struct glamodrm_handle *gdrm)
 {
 	fb_set_suspend(gdrm->fb, 0);
+}
+
+static int glamo_fbdev_probe(struct drm_fb_helper *helper,
+							 struct drm_fb_helper_surface_size *sizes)
+{
+	struct glamodrm_handle *gdrm = helper->dev->dev_private;
+	struct glamo_framebuffer * gfb = container_of(helper, struct glamo_framebuffer, base);
+	struct glamofb_par *par;
+	
+	struct drm_framebuffer *fb = &gdrm->gfb->fb;
+	struct drm_mode_fb_cmd2 mode_cmd = {0};
+	struct drm_glamo_gem_object *gobj;
+	struct fb_info *info = NULL;
+	
+	u32 cols_g;
+	int size, ret;
+	
+	DRM_DEBUG("%dx%d@%d (%dx%d)", sizes->surface_width,
+	         sizes->surface_height, sizes->surface_bpp, sizes->fb_width, sizes->fb_height);
+	
+	if (helper->fb)
+		return 0;
+	
+	//	TODO: implement glamo_lcd_get_format and use it here
+    cols_g = reg_read_lcd(gdrm, GLAMO_REG_LCD_MODE3) & 0xc000;
+    switch ( cols_g ) {
+    case GLAMO_LCD_SRC_RGB565 :
+            mode_cmd.pixel_format = DRM_FORMAT_RGB565;
+            break;
+    case GLAMO_LCD_SRC_ARGB1555 :
+            mode_cmd.pixel_format = DRM_FORMAT_ARGB1555;
+            break;
+    case GLAMO_LCD_SRC_ARGB4444 :
+            mode_cmd.pixel_format = DRM_FORMAT_ARGB4444;
+            break;
+    default :
+            printk(KERN_WARNING "Unrecognised LCD colour mode\n");
+            mode_cmd.pixel_format = DRM_FORMAT_RGB565; /* Take a guess */
+            break;
+    }
+    
+	mode_cmd.width = sizes->surface_width;
+	mode_cmd.height = sizes->surface_height;
+
+	mode_cmd.pitches[0] = ALIGN(mode_cmd.width * ((16 + 1) / 8), 64);
+
+	size = mode_cmd.pitches[0] * mode_cmd.height;
+	size = ALIGN(size, PAGE_SIZE);
+	if ( size > GLAMO_FRAMEBUFFER_ALLOCATION ) {
+		printk(KERN_ERR "[glamo-drm] Not enough memory for fb\n");
+		ret = -ENOMEM;
+		goto out;
+	}
+    
+    // fb->obj = allocate here ??
+	gfb->obj = glamo_gem_object_alloc(helper->dev, GLAMO_FRAMEBUFFER_ALLOCATION, 2);
+	if (!gfb->obj) {
+		printk(KERN_ERR "[glamo-drm] Failed to allocate framebuffer\n");
+		ret = -ENOMEM;
+		goto out;
+	}
+	gobj = gfb->obj->driver_private;
+	
+	ret = glamo_framebuffer_create(helper->dev, &mode_cmd, &fb, gfb->obj);
+	if (ret) {
+		DRM_ERROR("failed to allocate fb.\n");
+		goto out_unref;
+	}
+    
+    mutex_lock(&helper->dev->struct_mutex);
+	info = framebuffer_alloc(sizeof(struct glamofb_par), helper->dev->dev);
+	if (!info) {
+		ret = -ENOMEM;
+		goto out_unlock;
+	}
+    par = info->par;
+	par->crtc_ids[0] = to_glamo_crtc(gdrm->crtc)->base.base.id;
+	par->crtc_count = 1;
+	par->dev = helper->dev;
+	par->glamo_fb = gfb;
+
+	
+    helper->fb = fb;
+    helper->fbdev = info;
+    gdrm->crtc->fb = fb;
+    info->pseudo_palette = helper->pseudo_palette;
+    
+    //info->par = helper;
+    info->flags = FBINFO_DEFAULT;
+    info->fbops = &glamofb_ops;
+        
+    strcpy(info->fix.id, "glamodrmfb"); // MODULE_NAME
+    
+    drm_fb_helper_fill_fix(info, fb->pitches[0], fb->depth);
+    drm_fb_helper_fill_var(info, helper, sizes->fb_width, sizes->fb_height);
+    
+    info->fix.accel = FB_ACCEL_GLAMO;
+    
+	info->pixmap.size = 64*1024;
+	info->pixmap.buf_align = 8;
+	info->pixmap.access_align = 32;
+	info->pixmap.flags = FB_PIXMAP_SYSTEM;
+	info->pixmap.scan_align = 1;
+    
+    
+	info->screen_base = ioremap(gdrm->vram->start + gobj->block->start + GLAMO_OFFSET_FB,
+	                            GLAMO_FRAMEBUFFER_ALLOCATION);
+	if (!info->screen_base) {
+		printk(KERN_ERR "[glamo-drm] Couldn't map framebuffer!\n");
+		ret = -ENOSPC;
+		goto out_unlock;
+	}
+	info->fix.smem_start = (unsigned long)gdrm->vram->start + gobj->block->start;
+	info->fix.smem_len = size;
+	info->screen_size = size;
+    
+    mutex_unlock(&helper->dev->struct_mutex);
+	printk(KERN_INFO "[glamo-drm] Allocated %dx%d fb: bo %p\n",
+	       fb->width, fb->height, gfb->obj);
+    
+    return 1;
+
+out_unlock:
+	mutex_unlock(&helper->dev->struct_mutex);
+out_unref:
+	//drm_gem_object_unreference(gfb->obj);
+out:	
+	return ret;
+}
+
+static void glamo_fb_gamma_set(struct drm_crtc *crtc, u16 r, u16 g, u16 b, int regno)
+{
+	printk("[glamo-drm] fbdev: set gamma\n");
+}
+
+static void glamo_fb_gamma_get(struct drm_crtc *crtc, u16 *r, u16 *g, u16 *b, int regno)
+{
+	printk("[glamo-drm] fbdev: get gamma\n");
+}
+
+static struct drm_fb_helper_funcs glamo_fb_helper_funcs = {
+	.gamma_set = glamo_fb_gamma_set,
+	.gamma_get = glamo_fb_gamma_get,
+	.fb_probe = glamo_fbdev_probe,
+};
+
+
+int glamo_fbdev_init(struct drm_device *dev)
+{
+	int ret;
+	struct glamo_crtc *glamo_crtc;
+	struct glamo_framebuffer * glamo_fb;
+	//struct glamofb_par *par;
+	struct glamodrm_handle *gdrm = dev->dev_private;
+	
+	DRM_DEBUG("\n");
+	
+	glamo_fb = kzalloc(sizeof(*glamo_fb), GFP_KERNEL);
+	if (!glamo_fb)
+		return -ENOMEM;
+	gdrm->gfb = glamo_fb;
+	
+	glamo_crtc = to_glamo_crtc(gdrm->crtc);
+	glamo_crtc->fb_helper = &glamo_fb->base;
+	
+	
+	//par = glamo_fb->base.fbdev->par;
+	//par->crtc_ids[0] = glamo_crtc->base.base.id;
+	//par->crtc_count = 1;
+	
+	glamo_fb->base.funcs = &glamo_fb_helper_funcs;
+
+	ret = drm_fb_helper_init(dev, &glamo_fb->base, 1, 1);
+	if (ret)
+		return ret;
+	
+	drm_fb_helper_single_add_all_connectors(&glamo_fb->base);
+	drm_fb_helper_initial_config(&glamo_fb->base, 16);
+
+	glamo_crtc->mode_set.fb = &glamo_fb->fb;
+	
+	return 0;
 }

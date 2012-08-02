@@ -30,10 +30,11 @@
 #include <drm/drmP.h>
 #include "glamo-drm-private.h"
 
-extern int glamofb_create(struct drm_device *dev, uint32_t fb_width,
-                          uint32_t fb_height, uint32_t surface_width,
-                          uint32_t surface_height, int colour_mode,
-                          struct glamo_framebuffer **glamo_fb_p);
+/*extern int glamofb_create(struct drm_device *dev,
+                          struct drm_fb_helper_surface_size * sizes,
+                          u32 format, struct glamo_framebuffer **glamo_fb_p);*/
+extern int glamo_fbdev_init(struct drm_device *dev);
+
 
 extern void glamo_kmsfb_suspend(struct glamodrm_handle *gdrm);
 extern void glamo_kmsfb_resume(struct glamodrm_handle *gdrm);

@@ -344,10 +344,11 @@ void glamodrm_gem_free_object(struct drm_gem_object *obj)
 
 
 /* Memory management initialisation */
-int glamo_buffer_init(struct glamodrm_handle *gdrm)
+int glamo_buffer_init(struct drm_device *dev)
 {
-	gdrm->mmgr = kzalloc(sizeof(struct drm_mm), GFP_KERNEL);
-	drm_mm_init(gdrm->mmgr, 0, gdrm->vram_size);
+	struct glamodrm_handle *gdrm = dev->dev_private;
+	gdrm->mmgr = dev->mm_private;
+	//drm_mm_init(gdrm->mmgr, 0, gdrm->vram_size);
 
 	/* Reserve a scratch buffer.  We do this outside the protections
 	 * of the other GEM code.  To do this safely, the allocation must
@@ -368,7 +369,7 @@ int glamo_buffer_init(struct glamodrm_handle *gdrm)
 /* Memory management finalisation */
 int glamo_buffer_final(struct glamodrm_handle *gdrm)
 {
-	drm_mm_takedown(gdrm->mmgr);
-	kfree(gdrm->mmgr);
+	//drm_mm_takedown(gdrm->mmgr);
+	//kfree(gdrm->mmgr);
 	return 0;
 }

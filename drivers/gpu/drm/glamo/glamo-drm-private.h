@@ -35,6 +35,7 @@
 #include <linux/wait.h>
 
 #include <drm/drm_fb_helper.h>
+#include <drm/drm_crtc_helper.h>
 
 #include <linux/mfd/glamo-core.h>
 
@@ -47,7 +48,7 @@
 struct glamodrm_handle {
 
 	/* This device */
-	struct device *dev;
+	struct drm_device *dev;
 
 	/* The parent device handle */
 	struct glamo_core *glamo_core;
@@ -111,6 +112,7 @@ struct glamodrm_handle {
 
 	/* We only have one */
 	struct drm_crtc *crtc;
+	struct glamo_framebuffer *gfb;
 };
 
 
@@ -136,12 +138,14 @@ struct glamo_crtc {
 	struct drm_display_mode current_mode;
 	struct drm_framebuffer *current_fb;
 	struct drm_fb_helper *fb_helper;
+	
+	struct drm_connector *connectors[0];
 };
 
 
 struct glamo_framebuffer {
-    struct drm_fb_helper  base;    
-	struct drm_framebuffer base2;
+    struct drm_fb_helper  base;
+	struct drm_framebuffer fb;
 	struct drm_gem_object *obj;
 };
 
@@ -160,11 +164,15 @@ enum {
 	GLAMO_FB_ARGB4444
 };
 
+enum glamo_script_index {
+	GLAMO_SCRIPT_LCD_INIT,
+};
+
 
 #define to_glamo_crtc(x) container_of(x, struct glamo_crtc, base)
 #define to_glamo_output(x) container_of(x, struct glamo_output, base)
 #define enc_to_glamo_output(x) container_of(x, struct glamo_output, enc)
-#define to_glamo_framebuffer(x) container_of(x, struct glamo_framebuffer, base2)
+#define to_glamo_framebuffer(x) container_of(x, struct glamo_framebuffer, fb)
 
 
 #endif /* __GLAMO_DRMPRIV_H */

@@ -507,6 +507,7 @@ int glamo_cmdq_init(struct drm_device *dev)
 	struct glamodrm_handle *gdrm = dev->dev_private;
 	int ret = 0;
 
+	DRM_DEBUG("\n");
 	obj = glamo_gem_object_alloc(dev, GLAMO_CMDQ_SIZE, 4);
 	if ( !obj ) {
 		printk(KERN_ERR "[glamo-drm] Failed to allocate CmdQ\n");

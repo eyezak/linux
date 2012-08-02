@@ -59,7 +59,7 @@
 #include <linux/lockdep.h>
 
 #include "glamo-drm-private.h"
-#include "glamo-regs.h">
+#include "glamo-regs.h"
 #include <linux/mfd/glamo-core.h>
 #include "glamo-cmdq.h"
 
