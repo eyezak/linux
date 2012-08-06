@@ -38,12 +38,9 @@
 static void glamo_framebuffer_destroy(struct drm_framebuffer *fb)
 {
 	struct glamo_framebuffer *glamo_fb = to_glamo_framebuffer(fb);
-	struct drm_device *dev = fb->dev;
-
+	DRM_DEBUG("\n");
+	
 	drm_framebuffer_cleanup(fb);
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(glamo_fb->obj);
-	mutex_unlock(&dev->struct_mutex);
 
 	kfree(glamo_fb);
 }
@@ -52,10 +49,12 @@ static int glamo_framebuffer_create_handle(struct drm_framebuffer *fb,
 						struct drm_file *file_priv,
 						unsigned int *handle)
 {
-	struct glamo_framebuffer *glamo_fb = to_glamo_framebuffer(fb);
-	struct drm_gem_object *object = glamo_fb->obj;
+	struct glamodrm_handle *gdrm = fb->dev->dev_private;
+	struct glamo_crtc *glamo_crtc = to_glamo_crtc(gdrm->crtc);
+	struct glamo_fbdev *fbdev = to_glamo_fbdev(glamo_crtc->fb_helper);
 
-	return drm_gem_handle_create(file_priv, object, handle);
+	DRM_DEBUG("\n");
+	return drm_gem_handle_create(file_priv, fbdev->obj, handle);
 }
 
 
@@ -65,31 +64,40 @@ static const struct drm_framebuffer_funcs glamo_fb_funcs = {
 };
 
 
-int glamo_framebuffer_create(struct drm_device *dev,
+struct drm_framebuffer * glamo_framebuffer_create(struct drm_device *dev,
 			     struct drm_mode_fb_cmd2 *mode_cmd,
-			     struct drm_framebuffer **fb,
 			     struct drm_gem_object *obj)
 {
-	struct glamo_framebuffer *glamo_fb;
 	struct glamodrm_handle *gdrm = dev->dev_private;
+	struct glamo_crtc * glamo_crtc = to_glamo_crtc(gdrm->crtc);
+	struct glamo_framebuffer *glamo_fb;
+	struct drm_framebuffer *fb;
 	int ret;
 
-	glamo_fb = gdrm->gfb;
+	DRM_DEBUG("%dx%d %#x\n", mode_cmd->width, mode_cmd->height, mode_cmd->pixel_format);
+	
+	glamo_fb = kzalloc(sizeof(*glamo_fb), GFP_KERNEL);
+	if (!glamo_fb) {
+		DRM_ERROR("could not allocate fb\n");
+		return ERR_PTR(-ENOMEM);
+	}
 
-	ret = drm_framebuffer_init(dev, &glamo_fb->base2, &glamo_fb_funcs);
+	fb = &glamo_fb->base;
+	ret = drm_framebuffer_init(dev, fb, &glamo_fb_funcs);
 	if (ret) {
         drm_gem_object_unreference_unlocked(obj);
         
         DRM_ERROR("framebuffer init failed %d\n", ret);
-        return ret;
+        return ERR_PTR(ret);
 	}
 
-	drm_helper_mode_fill_fb_struct(&glamo_fb->base2, mode_cmd);
+	drm_helper_mode_fill_fb_struct(fb, mode_cmd);
 
-	glamo_fb->obj = obj;
+	//glamo_fbdev->obj = obj;
+	gdrm->crtc->fb = fb;
+	glamo_crtc->mode_set.fb = fb;
 
-	*fb = &glamo_fb->base2;
-
-	return 0;
+    DRM_DEBUG("%p\n", fb);
+	return fb;
 }
 

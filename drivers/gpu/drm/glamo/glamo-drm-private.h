@@ -84,6 +84,8 @@ struct glamodrm_handle {
 	/* semaphore against concurrent ioctl */
 	struct semaphore add_to_ring;
 
+	int lcd_cmd_mode;
+	
 	/* Saved state */
 	u_int16_t saved_clock;
 	u_int16_t saved_width;
@@ -112,7 +114,7 @@ struct glamodrm_handle {
 
 	/* We only have one */
 	struct drm_crtc *crtc;
-	struct glamo_framebuffer *gfb;
+	//struct glamo_framebuffer *gfb;
 };
 
 
@@ -132,9 +134,9 @@ struct glamo_crtc {
 	struct drm_mode_set mode_set;
 	int blank_mode;
 
-	int pixel_clock_on;
-
-	int current_mode_set;
+	int pixel_clock_on:1;
+	int current_mode_set:1;
+	
 	struct drm_display_mode current_mode;
 	struct drm_framebuffer *current_fb;
 	struct drm_fb_helper *fb_helper;
@@ -144,11 +146,14 @@ struct glamo_crtc {
 
 
 struct glamo_framebuffer {
-    struct drm_fb_helper  base;
-	struct drm_framebuffer fb;
-	struct drm_gem_object *obj;
+    struct drm_framebuffer  base;
+	struct drm_fb_helper *fbdev;
 };
 
+struct glamo_fbdev {
+	struct drm_fb_helper base;
+	struct drm_gem_object *obj;
+};
 
 struct glamo_output {
 	struct drm_connector base;
@@ -172,7 +177,8 @@ enum glamo_script_index {
 #define to_glamo_crtc(x) container_of(x, struct glamo_crtc, base)
 #define to_glamo_output(x) container_of(x, struct glamo_output, base)
 #define enc_to_glamo_output(x) container_of(x, struct glamo_output, enc)
-#define to_glamo_framebuffer(x) container_of(x, struct glamo_framebuffer, fb)
+#define to_glamo_framebuffer(x) container_of(x, struct glamo_framebuffer, base)
+#define to_glamo_fbdev(x) container_of(x, struct glamo_fbdev, base)
 
 
 #endif /* __GLAMO_DRMPRIV_H */

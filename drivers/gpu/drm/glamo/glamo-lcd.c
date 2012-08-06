@@ -123,19 +123,21 @@ static inline int glamo_lcd_cmdq_empty(struct glamodrm_handle *gdrm)
 /* call holding gfb->lock_cmd  when locking, until you unlock */
 int glamo_lcd_cmd_mode(struct glamodrm_handle *gdrm, int on)
 {
-	int timeout = 2000000;
+	int timeout;
+	if (on == gdrm->lcd_cmd_mode)
+		return 0;
 
-	dev_dbg(gdrm->dev->dev, "glamofb_cmd_mode(on=%d)\n", on);
+	DRM_DEBUG("glamofb_cmd_mode ( %d => %d )\n", on, gdrm->lcd_cmd_mode);
 	if (on) {
 
+		timeout = 20000;
 		while ((!glamo_lcd_cmdq_empty(gdrm)) && (timeout--))
 			/* yield() */;
 		if (timeout < 0) {
-			printk(KERN_ERR "*************"
-			                " LCD command queue never got empty "
-			                "*************\n");
+			DRM_ERROR("LCD command queue failed to empty\n");
 			return -EIO;
 		}
+		DRM_DEBUG("cmd queue empty in %d\n", 2000000 - timeout);
 
 		/* display the entire frame then switch to command */
 		reg_write_lcd(gdrm, GLAMO_REG_LCD_COMMAND1,
@@ -146,15 +148,14 @@ int glamo_lcd_cmd_mode(struct glamodrm_handle *gdrm, int on)
 		timeout = 2000000;
 		while ((!(reg_read_lcd(gdrm, GLAMO_REG_LCD_STATUS2) & (1 << 12)))
 		          && (timeout--))
-			/* yield() */;
+			udelay(1);			
 		if (timeout < 0) {
-			printk(KERN_ERR"*************"
-				       " LCD never idle "
-				       "*************\n");
+			DRM_ERROR("LCD failed to reach idle\n");
 			return -EIO;
 		}
+		DRM_DEBUG("lcd status idle in %d\n", 2000000 - timeout);
 
-		mdelay(100);
+		//mdelay(100);
 
 	} else {
 		/* RGB interface needs vsync/hsync */
@@ -170,6 +171,7 @@ int glamo_lcd_cmd_mode(struct glamodrm_handle *gdrm, int on)
 			  GLAMO_LCD_CMD_DATA_DISP_FIRE);
 	}
 
+	gdrm->lcd_cmd_mode = on;
 	return 0;
 }
 
@@ -216,7 +218,7 @@ static struct glamo_script_list glamo_lcd_scripts[] = {
 	},
 };
 
-int glamo_run_lcd_script(struct glamodrm_handle *gdrm,
+static int glamo_lcd_run_script(struct glamodrm_handle *gdrm,
                                 enum glamo_script_index sc)
 {
 	int i, len;
@@ -245,23 +247,22 @@ void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode)
 	struct drm_crtc *crtc = gdrm->crtc;
 	struct glamo_crtc *gcrtc = to_glamo_crtc(crtc);
 	
-	//DRM_DEBUG("%d\n", mode);
+	DRM_DEBUG("dpms %s\n", ((char*[]) {"on", "standby", "suspend", "off"})[mode]);
 
-	if ( mode ) {
-		printk(KERN_CRIT "Power on sequence\n");
+	if ( mode == DRM_MODE_DPMS_ON) {
 		glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 		gcrtc->pixel_clock_on = 1;
 		if (gdrm->glamo_core->pdata->fb_data->mode_change)
 		    gdrm->glamo_core->pdata->fb_data->mode_change(&gcrtc->current_mode);
 		//jbt6k74_setpower(JBT_POWER_MODE_NORMAL);
-		if ( gcrtc->current_mode_set ) {
+		/*if ( gcrtc->current_mode_set ) {
 			printk(KERN_CRIT "Setting previous mode\n");
 			glamo_crtc_mode_set(crtc, &gcrtc->current_mode,
 			                    &gcrtc->current_mode, 0, 0,
 			                    gcrtc->current_fb);
-		}
+		}*/
+		//msleep(500);
 	} else {
-		printk(KERN_CRIT "Power off sequence\n");
 		//jbt6k74_setpower(JBT_POWER_MODE_OFF);
 		if (gdrm->glamo_core->pdata->fb_data->mode_change)
 		    gdrm->glamo_core->pdata->fb_data->mode_change(NULL);
@@ -271,4 +272,12 @@ void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode)
 }
 
 
+void glamo_lcd_init(struct glamodrm_handle *gdrm)
+{
+	/* Initial setup of the LCD controller */
+	glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
+	glamo_engine_reset(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 
+	glamo_lcd_run_script(gdrm, GLAMO_SCRIPT_LCD_INIT);
+	glamo_engine_suspend(gdrm->glamo_core, GLAMO_ENGINE_LCD);
+}

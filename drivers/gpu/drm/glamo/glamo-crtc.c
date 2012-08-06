@@ -87,16 +87,23 @@ extern void reg_set_bit_mask_lcd(struct glamodrm_handle *gdrm,
 static void glamo_crtc_dpms(struct drm_crtc *crtc, int mode)
 {
 	/* do nothing */
+	DRM_DEBUG("mode = %s\n", ((char*[]) {"on", "standby", "suspend", "off"})[mode]);
+	
+	//glamo_lcd_power(to_glamo_crtc(crtc)->gdrm, mode);
 }
 
 
 static void glamo_crtc_prepare(struct drm_crtc *crtc)
 {
+	DRM_DEBUG("\n");
+	glamo_lcd_power(to_glamo_crtc(crtc)->gdrm, DRM_MODE_DPMS_ON);
 }
 
 
 static void glamo_crtc_commit(struct drm_crtc *crtc)
 {
+	DRM_DEBUG("\n");
+	glamo_lcd_power(to_glamo_crtc(crtc)->gdrm, DRM_MODE_DPMS_OFF);
 }
 
 
@@ -105,12 +112,14 @@ static int glamo_crtc_cursor_set(struct drm_crtc *crtc,
                                  uint32_t handle,
                                  uint32_t width, uint32_t height)
 {
+	DRM_DEBUG("cursor = %u (%ux%u)\n", handle, width, height);
 	return 0;
 }
 
 
 static int glamo_crtc_cursor_move(struct drm_crtc *crtc, int x, int y)
 {
+	DRM_DEBUG("( %d , %d )\n", x, y);
 	return 0;
 }
 
@@ -118,12 +127,14 @@ static int glamo_crtc_cursor_move(struct drm_crtc *crtc, int x, int y)
 static void glamo_crtc_gamma_set(struct drm_crtc *crtc, u16 *r, u16 *g,
                                  u16 *b, uint32_t start, uint32_t size)
 {
+	DRM_DEBUG("[%u,%u,%u] @%u +%u\n", *r, *g, *b, start, size);
 }
 
 static bool glamo_crtc_mode_fixup(struct drm_crtc *crtc,
                                   struct drm_display_mode *mode,
                                   struct drm_display_mode *adjusted_mode)
 {
+	DRM_DEBUG("%p => %p\n", mode, adjusted_mode);
 	return true;
 }
 
@@ -133,8 +144,7 @@ static int glamo_crtc_mode_set_base(struct drm_crtc *crtc, int x, int y,
 {
 	struct glamodrm_handle *gdrm;
 	struct glamo_crtc *gcrtc;
-	struct glamo_framebuffer *gfb;
-	struct drm_gem_object *obj;
+	struct glamo_fbdev *glamo_fbdev;
 	struct drm_glamo_gem_object *gobj;
 	u32 addr;
 	u16 addr_low, addr_high;
@@ -150,15 +160,8 @@ static int glamo_crtc_mode_set_base(struct drm_crtc *crtc, int x, int y,
 	gcrtc = to_glamo_crtc(crtc);
 	gdrm = gcrtc->gdrm;	/* Here it is! */
 
-	if ( !gcrtc->pixel_clock_on ) {
-		printk(KERN_WARNING "[glamo-drm] Display is off - "
-		                    "enabling it before setting base.\n");
-		glamo_lcd_power(gdrm, 1);
-	}
-
-	gfb = to_glamo_framebuffer(crtc->fb);
-	obj = gfb->obj;
-	gobj = obj->driver_private;
+	glamo_fbdev = to_glamo_fbdev(gcrtc->fb_helper);
+	gobj = glamo_fbdev->obj->driver_private;
 
 	addr = GLAMO_OFFSET_FB + gobj->block->start;
 	addr_low = addr & 0xffff;
@@ -184,6 +187,7 @@ int glamo_crtc_mode_set(struct drm_crtc *crtc,
 	struct glamo_fb_platform_data *fb_info;
 	int retr_start, retr_end, disp_start, disp_end;
 	int rot;
+	DRM_DEBUG("Setting mode\n");
 
 	/* Dig out our handle */
 	gcrtc = to_glamo_crtc(crtc);
@@ -191,15 +195,6 @@ int glamo_crtc_mode_set(struct drm_crtc *crtc,
 	
 	/* Dig out the record which will tell us about the hardware */
 	fb_info = gdrm->glamo_core->pdata->fb_data;
-
-	if ( !gcrtc->pixel_clock_on ) {
-		printk(KERN_WARNING "[glamo-drm] Display is off - "
-		                    "enabling it before setting mode.\n");
-		glamo_lcd_power(gdrm, 1);
-		msleep(500);
-	}
-
-	DRM_DEBUG("Setting mode\n");
 
 	/* Rotate? */
 	if ( (mode->hdisplay == 640) && (mode->vdisplay == 480) ) {
@@ -331,9 +326,9 @@ int glamo_crtc_mode_set(struct drm_crtc *crtc,
 
 	gdrm->saved_clock = mode->clock;
 
-	glamo_lcd_cmd_mode(gdrm, 0);
-
 	glamo_crtc_mode_set_base(crtc, 0, 0, old_fb);
+	
+	glamo_lcd_cmd_mode(gdrm, 0);
 
 	/*if ( mode->hdisplay == 240 ) {
 		jbt6k74_finish_resolutionchange(JBT_RESOLUTION_QVGA);

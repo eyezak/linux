@@ -65,15 +65,7 @@
 #include "glamo-kms-fb.h"
 #include "glamo-display.h"
 
-
-/*extern int glamo_crtc_mode_set(struct drm_crtc *crtc,
-                               struct drm_display_mode *mode,
-                               struct drm_display_mode *adjusted_mode,
-                               int x, int y,
-                               struct drm_framebuffer *old_fb);
-extern void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode);*/
-
-
+extern void glamo_lcd_init(struct glamodrm_handle *gdrm);
 extern int glamo_crtc_init(struct drm_device *dev);
 extern int glamo_crtc_resume(struct glamodrm_handle *gdrm);
 extern int glamo_encoder_init(struct drm_device *dev, struct drm_encoder *enc);
@@ -99,66 +91,6 @@ struct glamofb_par {
 };
 
 
-static void glamo_framebuffer_destroy(struct drm_framebuffer *fb)
-{
-	struct glamo_framebuffer *glamo_fb = to_glamo_framebuffer(fb);
-	struct drm_device *dev = fb->dev;
-
-	drm_framebuffer_cleanup(fb);
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(glamo_fb->obj);
-	mutex_unlock(&dev->struct_mutex);
-
-	kfree(glamo_fb);
-}
-
-static int glamo_framebuffer_create_handle(struct drm_framebuffer *fb,
-						struct drm_file *file_priv,
-						unsigned int *handle)
-{
-	struct glamo_framebuffer *glamo_fb = to_glamo_framebuffer(fb);
-	struct drm_gem_object *object = glamo_fb->obj;
-
-	return drm_gem_handle_create(file_priv, object, handle);
-}
-
-
-static const struct drm_framebuffer_funcs glamo_fb_funcs = {
-	.destroy = glamo_framebuffer_destroy,
-	.create_handle = glamo_framebuffer_create_handle,
-};
-
-
-int glamo_framebuffer_create(struct drm_device *dev,
-			     struct drm_mode_fb_cmd2 *mode_cmd,
-			     struct drm_framebuffer **fb,
-			     struct drm_gem_object *obj)
-{
-	struct glamo_framebuffer *glamo_fb;
-	struct glamodrm_handle *gdrm = dev->dev_private;
-	int ret;
-
-	printk(KERN_INFO "[glamo-drm] <framebuffer create>\n");
-
-	glamo_fb = gdrm->gfb;
-	ret = drm_framebuffer_init(dev, &glamo_fb->fb, &glamo_fb_funcs);
-	if (ret) {
-        drm_gem_object_unreference_unlocked(obj);
-        
-        DRM_ERROR("framebuffer init failed %d\n", ret);
-        return ret;
-	}
-
-	drm_helper_mode_fill_fb_struct(&glamo_fb->fb, mode_cmd);
-
-	glamo_fb->obj = obj;
-
-	*fb = &glamo_fb->fb;
-
-	return 0;
-}
-
-
 static struct drm_framebuffer *
 glamo_user_framebuffer_create(struct drm_device *dev,
 			      struct drm_file *filp,
@@ -166,18 +98,18 @@ glamo_user_framebuffer_create(struct drm_device *dev,
 {
 	struct drm_gem_object *obj;
 	struct drm_framebuffer *fb;
-	int ret;
-	
-	printk(KERN_INFO "[glamo-drm] <framebuffer_create>\n");
+	DRM_DEBUG("\n");
 
     obj = drm_gem_object_lookup(dev, filp, mode_cmd->handles[0]);
-	if (!obj)
+	if (!obj) {
+		DRM_ERROR("unable to find handle object %u\n", mode_cmd->handles[0]);
 		return ERR_PTR(ENOENT);
+	}
 
-	ret = glamo_framebuffer_create(dev, mode_cmd, &fb, obj);
-	if (ret) {
+	fb = glamo_framebuffer_create(dev, mode_cmd, obj);
+	if (IS_ERR(fb)) {
 		drm_gem_object_unreference(obj);
-		return NULL;
+		return fb;
 	}
 
 	return fb;
@@ -187,7 +119,7 @@ glamo_user_framebuffer_create(struct drm_device *dev,
 void glamo_fbchanged(struct drm_device *dev)
 {
     /* stub TODO: fixme */
-    dev_info(dev->dev, "fb changed\n");
+    DRM_DEBUG("TODO: stub\n");
 }
 
 
@@ -208,7 +140,7 @@ void glamo_display_restore(void)
 }
 
 
-static int glamo_display_panic(struct notifier_block *n, unsigned long ununsed,
+/*static int glamo_display_panic(struct notifier_block *n, unsigned long ununsed,
                                void *panic_str)
 {
 	DRM_ERROR("panic occurred, switching back to text console\n");
@@ -217,10 +149,9 @@ static int glamo_display_panic(struct notifier_block *n, unsigned long ununsed,
 	return 0;
 }
 
-
 static struct notifier_block paniced = {
 	.notifier_call = glamo_display_panic,
-};
+};*/
 
 int glamo_modeset_init(struct drm_device *dev)
 {
@@ -229,7 +160,7 @@ int glamo_modeset_init(struct drm_device *dev)
 	struct glamo_crtc *glamo_crtc;
 	struct glamodrm_handle *gdrm = dev->dev_private;
 
-	printk(KERN_INFO "[glamo-drm] <modeset_init>\n");
+	DRM_DEBUG("\n");
 	drm_mode_config_init(dev);
 
 	glamo_output = kzalloc(sizeof(struct glamo_output), GFP_KERNEL);
@@ -263,36 +194,6 @@ int glamo_modeset_init(struct drm_device *dev)
 	return 0;
 }
 
-int glamo_display_init(struct drm_device *dev)
-{
-	int ret;
-	struct glamo_crtc *glamo_crtc;
-	struct glamodrm_handle *gdrm = dev->dev_private;
-	
-	printk(KERN_INFO "[glamo-drm] <display_init>\n");	
-	/* Initial setup of the LCD controller */
-	glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
-	glamo_engine_reset(gdrm->glamo_core, GLAMO_ENGINE_LCD);
-
-	glamo_run_lcd_script(gdrm, GLAMO_SCRIPT_LCD_INIT);
-	
-	ret = glamo_modeset_init(dev);
-	if (ret)
-		return ret;
-	
-	ret = glamo_fbdev_init(dev);
-	if (ret)
-		return ret;
-
-	/* Switch back to kernel console on panic */
-	glamo_crtc = to_glamo_crtc(gdrm->crtc);
-	kernelfb_mode = glamo_crtc->mode_set;
-	atomic_notifier_chain_register(&panic_notifier_list, &paniced);
-	printk(KERN_INFO "[glamo-drm] Registered panic notifier\n");
-
-	return 0;
-}
-
 void glamo_display_suspend(struct glamodrm_handle *gdrm)
 {
 	/* do nothing */
@@ -301,9 +202,9 @@ void glamo_display_suspend(struct glamodrm_handle *gdrm)
 
 void glamo_display_resume(struct glamodrm_handle *gdrm)
 {
-	glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
+	/*glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 	glamo_engine_reset(gdrm->glamo_core, GLAMO_ENGINE_LCD);
-	glamo_run_lcd_script(gdrm, GLAMO_SCRIPT_LCD_INIT);
+	glamo_run_lcd_script(gdrm, GLAMO_SCRIPT_LCD_INIT);*/
 
 	glamo_crtc_resume(gdrm);
 }

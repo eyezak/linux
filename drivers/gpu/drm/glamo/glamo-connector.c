@@ -69,11 +69,9 @@
 static void glamo_connector_dpms(struct drm_connector *connector, int mode)
 {
 	struct glamo_output *output = to_glamo_output(connector);
-	struct glamo_fb_platform_data *fb_data;
-	struct glamo_crtc *gcrtc = to_glamo_crtc(connector->encoder->crtc);
 	int old_dpms;
 	
-	DRM_DEBUG("\n");
+	DRM_DEBUG("%d => %d\n", connector->dpms, mode);
 	
 	old_dpms = connector->dpms;
 	
@@ -81,21 +79,9 @@ static void glamo_connector_dpms(struct drm_connector *connector, int mode)
 	if (mode < old_dpms) {
 		drm_helper_connector_dpms(connector, mode);
 	}
-	
-	if (mode == DRM_MODE_DPMS_ON) {
-		fb_data = output->gdrm->glamo_core->pdata->fb_data;
 
-		if ( !gcrtc->pixel_clock_on ) {
-			printk(KERN_WARNING "[glamo-drm] Display is off - "
-				                "enabling it before setting mode.\n");
-			glamo_lcd_power(output->gdrm, 1);
-			msleep(500);
-		}
-	
-		/*if (fb_data)
-			if (fb_data->mode_change)
-				fb_data->mode_change(mode);*/
-	}
+	if (mode != old_dpms)
+		glamo_lcd_power(output->gdrm, mode);
 	
 	if (mode > old_dpms) {
 		drm_helper_connector_dpms(connector, mode);
@@ -190,7 +176,6 @@ static void glamo_connector_destroy(struct drm_connector *connector)
 {
 	drm_sysfs_connector_remove(connector);
 	drm_connector_cleanup(connector);
-	kfree(connector);
 }
 
 /* Connector functions */
@@ -221,6 +206,7 @@ int glamo_connector_init(struct drm_device *dev,
 	
 	connector->interlace_allowed = 0;
 	connector->doublescan_allowed = 0;
+	connector->dpms = DRM_MODE_DPMS_OFF;
 	
 	drm_sysfs_connector_add(connector);
 	

@@ -67,6 +67,7 @@
 
 static void glamo_encoder_dpms(struct drm_encoder *encoder, int mode)
 {
+	DRM_DEBUG("mode = %s\n", ((char*[]) {"on", "standby", "suspend", "off"})[mode]);
 }
 
 
@@ -81,11 +82,13 @@ static bool glamo_encoder_mode_fixup(struct drm_encoder *encoder,
 
 void glamo_encoder_prepare(struct drm_encoder *encoder)
 {
+	DRM_DEBUG("\n");
 }
 
 
 void glamo_encoder_commit(struct drm_encoder *encoder)
 {
+	DRM_DEBUG("\n");
 }
 
 
@@ -93,6 +96,7 @@ static void glamo_encoder_mode_set(struct drm_encoder *encoder,
                                struct drm_display_mode *mode,
                                struct drm_display_mode *adjusted_mode)
 {
+	DRM_DEBUG("\n");
 }
 
 static void glamo_encoder_destroy(struct drm_encoder *encoder)
@@ -118,6 +122,7 @@ static const struct drm_encoder_helper_funcs glamo_encoder_helper_funcs = {
 
 int glamo_encoder_init(struct drm_device *dev, struct drm_encoder *enc)
 {
+	DRM_DEBUG("\n");
 	drm_encoder_init(dev, enc, &glamo_encoder_funcs,
 	                 DRM_MODE_ENCODER_DAC);
 	
