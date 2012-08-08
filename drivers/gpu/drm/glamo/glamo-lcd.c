@@ -66,13 +66,6 @@
 #include "glamo-display.h"
 
 
-extern int glamo_crtc_mode_set(struct drm_crtc *crtc,
-                               struct drm_display_mode *mode,
-                               struct drm_display_mode *adjusted_mode,
-                               int x, int y,
-                               struct drm_framebuffer *old_fb);
-
-
 int reg_read_lcd(struct glamodrm_handle *gdrm, u_int16_t reg)
 {
 	int i = 0;
@@ -206,26 +199,10 @@ static struct glamo_script lcd_init_script[] = {
 	{ GLAMO_REG_LCD_COMMAND2, 0x0000 }, /* display page A */
 };
 
-struct glamo_script_list {
-	struct glamo_script * script;
-	int length;
-};
-
-static struct glamo_script_list glamo_lcd_scripts[] = {
-	[GLAMO_SCRIPT_LCD_INIT] = {
-		.script = lcd_init_script,
-		.length = ARRAY_SIZE(lcd_init_script),
-	},
-};
-
 static int glamo_lcd_run_script(struct glamodrm_handle *gdrm,
-                                enum glamo_script_index sc)
+                                struct glamo_script *script, int len)
 {
-	int i, len;
-	struct glamo_script *script;
-	
-	script = glamo_lcd_scripts[sc].script;
-	len = glamo_lcd_scripts[sc].length;
+	int i;
 
 	for (i = 0; i < len; i++) {
 		struct glamo_script *line = &script[i];
@@ -244,30 +221,20 @@ static int glamo_lcd_run_script(struct glamodrm_handle *gdrm,
 
 void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode)
 {
-	struct drm_crtc *crtc = gdrm->crtc;
-	struct glamo_crtc *gcrtc = to_glamo_crtc(crtc);
 	
 	DRM_DEBUG("dpms %s\n", ((char*[]) {"on", "standby", "suspend", "off"})[mode]);
 
 	if ( mode == DRM_MODE_DPMS_ON) {
 		glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
-		gcrtc->pixel_clock_on = 1;
 		if (gdrm->glamo_core->pdata->fb_data->mode_change)
-		    gdrm->glamo_core->pdata->fb_data->mode_change(&gcrtc->current_mode);
+		    gdrm->glamo_core->pdata->fb_data->mode_change(NULL);
 		//jbt6k74_setpower(JBT_POWER_MODE_NORMAL);
-		/*if ( gcrtc->current_mode_set ) {
-			printk(KERN_CRIT "Setting previous mode\n");
-			glamo_crtc_mode_set(crtc, &gcrtc->current_mode,
-			                    &gcrtc->current_mode, 0, 0,
-			                    gcrtc->current_fb);
-		}*/
 		//msleep(500);
 	} else {
 		//jbt6k74_setpower(JBT_POWER_MODE_OFF);
 		if (gdrm->glamo_core->pdata->fb_data->mode_change)
 		    gdrm->glamo_core->pdata->fb_data->mode_change(NULL);
 		glamo_engine_suspend(gdrm->glamo_core, GLAMO_ENGINE_LCD);
-		gcrtc->pixel_clock_on = 0;
 	}
 }
 
@@ -278,6 +245,6 @@ void glamo_lcd_init(struct glamodrm_handle *gdrm)
 	glamo_engine_enable(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 	glamo_engine_reset(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 
-	glamo_lcd_run_script(gdrm, GLAMO_SCRIPT_LCD_INIT);
+	glamo_lcd_run_script(gdrm, lcd_init_script, ARRAY_SIZE(lcd_init_script));
 	glamo_engine_suspend(gdrm->glamo_core, GLAMO_ENGINE_LCD);
 }

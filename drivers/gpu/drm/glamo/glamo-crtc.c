@@ -95,15 +95,19 @@ static void glamo_crtc_dpms(struct drm_crtc *crtc, int mode)
 
 static void glamo_crtc_prepare(struct drm_crtc *crtc)
 {
+    struct glamodrm_handle *gdrm = crtc->dev->dev_private;
+
 	DRM_DEBUG("\n");
-	glamo_lcd_power(to_glamo_crtc(crtc)->gdrm, DRM_MODE_DPMS_ON);
+	glamo_lcd_power(gdrm, DRM_MODE_DPMS_ON);
 }
 
 
 static void glamo_crtc_commit(struct drm_crtc *crtc)
 {
+    struct glamodrm_handle *gdrm = crtc->dev->dev_private;
+
 	DRM_DEBUG("\n");
-	glamo_lcd_power(to_glamo_crtc(crtc)->gdrm, DRM_MODE_DPMS_OFF);
+	glamo_lcd_power(gdrm, DRM_MODE_DPMS_OFF);
 }
 
 
@@ -142,8 +146,7 @@ static bool glamo_crtc_mode_fixup(struct drm_crtc *crtc,
 static int glamo_crtc_mode_set_base(struct drm_crtc *crtc, int x, int y,
                                     struct drm_framebuffer *old_fb)
 {
-	struct glamodrm_handle *gdrm;
-	struct glamo_crtc *gcrtc;
+	struct glamodrm_handle *gdrm = crtc->dev->dev_private;
 	struct glamo_fbdev *glamo_fbdev;
 	struct drm_glamo_gem_object *gobj;
 	u32 addr;
@@ -156,11 +159,7 @@ static int glamo_crtc_mode_set_base(struct drm_crtc *crtc, int x, int y,
 		return -EINVAL;
 	}
 
-	/* Dig out our handle */
-	gcrtc = to_glamo_crtc(crtc);
-	gdrm = gcrtc->gdrm;	/* Here it is! */
-
-	glamo_fbdev = to_glamo_fbdev(gcrtc->fb_helper);
+	glamo_fbdev = to_glamo_fbdev(gdrm->fb_helper);
 	gobj = glamo_fbdev->obj->driver_private;
 
 	addr = GLAMO_OFFSET_FB + gobj->block->start;
@@ -182,16 +181,11 @@ int glamo_crtc_mode_set(struct drm_crtc *crtc,
                                int x, int y,
                                struct drm_framebuffer *old_fb)
 {
-	struct glamodrm_handle *gdrm;
-	struct glamo_crtc *gcrtc;
+	struct glamodrm_handle *gdrm = crtc->dev->dev_private;
 	struct glamo_fb_platform_data *fb_info;
 	int retr_start, retr_end, disp_start, disp_end;
 	int rot;
 	DRM_DEBUG("Setting mode\n");
-
-	/* Dig out our handle */
-	gcrtc = to_glamo_crtc(crtc);
-	gdrm = gcrtc->gdrm;	/* Here it is! */
 	
 	/* Dig out the record which will tell us about the hardware */
 	fb_info = gdrm->glamo_core->pdata->fb_data;
@@ -324,34 +318,23 @@ int glamo_crtc_mode_set(struct drm_crtc *crtc,
 
 	}
 
-	gdrm->saved_clock = mode->clock;
+	//gdrm->saved_clock = mode->clock;
 
 	glamo_crtc_mode_set_base(crtc, 0, 0, old_fb);
 	
 	glamo_lcd_cmd_mode(gdrm, 0);
 
-	/*if ( mode->hdisplay == 240 ) {
-		jbt6k74_finish_resolutionchange(JBT_RESOLUTION_QVGA);
-	} else {
-		jbt6k74_finish_resolutionchange(JBT_RESOLUTION_VGA);
-	}*/
 	if (fb_info)
 	    if (fb_info->mode_change)
         	fb_info->mode_change(mode);
-
-	gcrtc->current_mode = *mode;
-	gcrtc->current_mode_set = 1;
-	gcrtc->current_fb = old_fb;
-	gcrtc->mode_set.fb = old_fb;
 
 	return 0;
 }
 
 static void glamo_crtc_destroy(struct drm_crtc *crtc)
 {
-	struct glamo_crtc *glamo_crtc = to_glamo_crtc(crtc);
 	drm_crtc_cleanup(crtc);
-	kfree(glamo_crtc);
+	kfree(crtc);
 }
 
 
@@ -375,44 +358,19 @@ static const struct drm_crtc_helper_funcs glamo_crtc_helper_funcs = {
 	.commit = glamo_crtc_commit,
 };
 
-int glamo_crtc_resume(struct glamodrm_handle *gdrm)
+struct drm_crtc * glamo_crtc_init(struct drm_device *dev)
 {
-	struct glamo_crtc *gcrtc = to_glamo_crtc(gdrm->crtc);
-
-	if ( gcrtc->current_mode_set ) {
-		glamo_crtc_mode_set(gdrm->crtc, &gcrtc->current_mode,
-		                    &gcrtc->current_mode, 0, 0,
-		                    gcrtc->current_fb);
-	}
-	return 0;
-}
-
-int glamo_crtc_init(struct drm_device *dev)
-{
-	struct glamo_crtc *glamo_crtc;
-	struct glamodrm_handle *gdrm = dev->dev_private;
+	struct drm_crtc *crtc;
 	
 	DRM_DEBUG("\n");
 	/* Initialise our CRTC object.
 	 * Only one connector per CRTC.  We know this: it's kind of soldered. */
-	glamo_crtc = kzalloc(sizeof(struct glamo_crtc)
-	                   + sizeof(struct drm_connector *)*2, GFP_KERNEL);
-	if (!glamo_crtc)
-		return -ENOMEM;
+	crtc = kzalloc(sizeof(struct drm_crtc), GFP_KERNEL);
+	if (!crtc)
+		return ERR_PTR(-ENOMEM);
 	
-	glamo_crtc->pixel_clock_on = 1;
-	glamo_crtc->blank_mode = DRM_MODE_DPMS_OFF;
+	drm_crtc_init(dev, crtc, &glamo_crtc_funcs);
+	drm_crtc_helper_add(crtc, &glamo_crtc_helper_funcs);
 	
-	drm_crtc_init(dev, &glamo_crtc->base, &glamo_crtc_funcs);
-	drm_crtc_helper_add(&glamo_crtc->base, &glamo_crtc_helper_funcs);
-
-	glamo_crtc->mode_set.crtc = &glamo_crtc->base;
-	glamo_crtc->mode_set.connectors = glamo_crtc->connectors;
-	glamo_crtc->mode_set.num_connectors = 0;
-	glamo_crtc->mode_set.mode = &glamo_crtc->mode_set.crtc->mode;
-	
-	gdrm->crtc = &glamo_crtc->base;
-	glamo_crtc->gdrm = gdrm;
-	
-	return 0;
+	return crtc;
 }

@@ -46,6 +46,12 @@
 
 extern void glamo_lcd_init(struct glamodrm_handle *gdrm);
 extern int glamo_modeset_init(struct drm_device *dev);
+extern void glamo_mode_config_init(struct drm_device *dev);
+extern struct drm_crtc * glamo_crtc_init(struct drm_device *dev);
+extern struct drm_encoder * glamo_encoder_init(struct drm_device *dev);
+extern struct drm_connector * glamo_connector_init(struct drm_device *dev);
+extern void glamo_fbdev_free(struct drm_device *dev);
+
 
 static int glamo_ioctl_swap(struct drm_device *dev, void *data,
 			    struct drm_file *file_priv)
@@ -129,8 +135,6 @@ static int glamodrm_platform_load(struct drm_device *dev, struct glamodrm_handle
 {
 	struct platform_device *pdev = to_platform_device(dev->dev);
 	int rc;
-	
-	gdrm->vram_size = GLAMO_FB_SIZE;
 	
 	/* Find the command queue registers */
 	gdrm->reg = platform_get_resource_byname(pdev, IORESOURCE_MEM,
@@ -242,66 +246,6 @@ out_free:
 	return rc;
 }
 
-static int glamodrm_load(struct drm_device *dev, unsigned long flags)
-{
-	struct glamodrm_handle *gdrm;
-	int ret;
-	
-	dev_info(dev->dev, "SMedia Glamo drm driver\n");
-	DRM_DEBUG("\n");
-	
-	gdrm = kzalloc(sizeof(*gdrm), GFP_KERNEL);
-	if (!gdrm) {
-		dev_err(dev->dev, "gdrm is NULL\n");
-		return -ENODEV;
-	}
-	dev->dev_private = gdrm;
-	gdrm->glamo_core = dev_get_drvdata(dev->dev->parent);
-	gdrm->dev = dev;
-	
-	ret = glamodrm_platform_load(dev, gdrm);
-	if (ret)
-		goto err;
-
-	ret = glamo_buffer_init(dev);
-	if (ret)
-		goto err;
-	
-	ret = glamo_cmdq_init(dev);
-	if (ret)
-		goto buffer_err;
-	
-	glamo_fence_init(gdrm);
-	
-	glamo_lcd_init(gdrm);
-	
-	ret = glamo_modeset_init(dev);
-	if (ret)
-		goto fence_err;
-	
-	ret = glamo_fbdev_init(dev);
-	if (ret)
-		goto fence_err;
-
-	drm_kms_helper_poll_init(dev);
-	/*ret = drm_vblank_init(dev, 1);
-	if (ret)
-	    dev_warn(dev->dev, "could not init vblank\n");*/
-
-	return 0;
-
-
-fence_err:
-	glamo_fence_shutdown(gdrm);
-buffer_err:
-	glamo_buffer_final(gdrm);
-err:
-	kfree(gdrm);
-	dev->dev_private = NULL;
-	return ret;
-}
-
-
 static void glamodrm_platform_unload(struct glamodrm_handle *gdrm)
 {
 	/* Release registers */
@@ -322,14 +266,97 @@ static void glamodrm_platform_unload(struct glamodrm_handle *gdrm)
 	                   resource_size(gdrm->twod_regs));
 }
 
+
+static int glamodrm_load(struct drm_device *dev, unsigned long flags)
+{
+	struct glamodrm_handle *gdrm;
+	struct drm_connector *connector;
+	struct drm_encoder *encoder;
+	struct drm_crtc *crtc;
+	int ret;
+	
+	dev_info(dev->dev, "SMedia Glamo drm driver\n");
+	DRM_DEBUG("\n");
+	
+	gdrm = kzalloc(sizeof(*gdrm), GFP_KERNEL);
+	if (!gdrm) {
+		dev_err(dev->dev, "gdrm is NULL\n");
+		return -ENODEV;
+	}
+	dev->dev_private = gdrm;
+	gdrm->glamo_core = dev_get_drvdata(dev->dev->parent);
+	gdrm->dev = dev;
+	
+	ret = glamodrm_platform_load(dev, gdrm);
+	if (ret)
+		goto free;
+
+	ret = glamo_buffer_init(dev);
+	if (ret)
+		goto platform_free;
+	
+	ret = glamo_cmdq_init(dev);
+	if (ret)
+		goto buffer_free;
+	
+	glamo_fence_init(gdrm);
+	
+	glamo_lcd_init(gdrm);
+
+	glamo_mode_config_init(dev);
+
+	encoder = glamo_encoder_init(dev);
+	if (IS_ERR(encoder)) {
+		ret = PTR_ERR(encoder);
+		goto modeconfig_free;
+	}
+	connector = glamo_connector_init(dev);
+	if (IS_ERR(connector)) {
+		ret = PTR_ERR(connector);
+		goto modeconfig_free;
+	}
+	
+	crtc = glamo_crtc_init(dev);
+	if (IS_ERR(crtc)) {
+		ret = PTR_ERR(crtc);
+		goto modeconfig_free;
+	}
+
+	drm_mode_connector_attach_encoder(connector, encoder);
+	connector->encoder = encoder;
+		
+	ret = glamo_fbdev_init(dev);
+	if (ret)
+		goto modeconfig_free;
+
+	drm_kms_helper_poll_init(dev);
+	/*ret = drm_vblank_init(dev, 1);
+	if (ret)
+	    dev_warn(dev->dev, "could not init vblank\n");*/
+
+	return 0;
+
+modeconfig_free:
+	drm_mode_config_cleanup(dev);
+	glamo_fence_shutdown(gdrm);
+buffer_free:
+	glamo_buffer_final(gdrm);
+platform_free:
+	glamodrm_platform_unload(gdrm);
+free:
+	kfree(gdrm);
+	dev->dev_private = NULL;
+	return ret;
+}
+
 static int glamodrm_unload(struct drm_device *dev)
 {
 	struct glamodrm_handle *gdrm = dev->dev_private;
 	
 	drm_kms_helper_poll_fini(dev);
 	
+	glamo_fbdev_free(dev);
 	
-	/* modeset free */
 	drm_mode_config_cleanup(dev);
 
 	glamo_engine_disable(gdrm->glamo_core, GLAMO_ENGINE_2D);
@@ -415,12 +442,11 @@ static int glamodrm_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	struct glamodrm_handle *gdrm = platform_get_drvdata(pdev);
 
-	console_lock();
-	fb_set_suspend(gdrm->fb, 1);
-	console_unlock();
+	/*console_lock();
+	fb_set_suspend(gdrm->fb_helper->fbdev, 1);
+	console_unlock();*/
 
 	/* glamo_core.c will suspend the engines for us */
-
 	return 0;
 }
 
@@ -429,9 +455,9 @@ static int glamodrm_resume(struct platform_device *pdev)
 {
 	struct glamodrm_handle *gdrm = platform_get_drvdata(pdev);
 
-	console_lock();
-	fb_set_suspend(gdrm->fb, 0);
-	console_unlock();
+	/*console_lock();
+	fb_set_suspend(gdrm->fb_helper->fbdev, 0);
+	console_unlock();*/
 
 	return 0;
 }

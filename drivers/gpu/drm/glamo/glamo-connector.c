@@ -68,7 +68,7 @@
 
 static void glamo_connector_dpms(struct drm_connector *connector, int mode)
 {
-	struct glamo_output *output = to_glamo_output(connector);
+	struct glamodrm_handle *gdrm = connector->dev->dev_private;
 	int old_dpms;
 	
 	DRM_DEBUG("%d => %d\n", connector->dpms, mode);
@@ -81,7 +81,7 @@ static void glamo_connector_dpms(struct drm_connector *connector, int mode)
 	}
 
 	if (mode != old_dpms)
-		glamo_lcd_power(output->gdrm, mode);
+		glamo_lcd_power(gdrm, mode);
 	
 	if (mode > old_dpms) {
 		drm_helper_connector_dpms(connector, mode);
@@ -98,15 +98,22 @@ glamo_connector_detect(struct drm_connector *connector, bool force)
 struct drm_encoder *
 glamo_connector_best_encoder(struct drm_connector *connector)
 {
-	struct glamo_output *glamo_output = to_glamo_output(connector);
-	return &glamo_output->enc;
+/*	struct glamo_output *glamo_output = to_glamo_output(connector);
+	return &glamo_output->enc;*/
+	
+	struct drm_mode_config *mode_config = &connector->dev->mode_config;
+	struct drm_encoder *encoder;
+	
+	list_for_each_entry(encoder, &mode_config->encoder_list, head)
+		return encoder;
+	
+	return NULL;
 }
 
 static int glamo_connector_get_modes(struct drm_connector *connector)
 {
 	struct glamo_fb_platform_data *fb_info;
-	struct glamo_output *goutput = to_glamo_output(connector);
-	struct glamodrm_handle *gdrm = goutput->gdrm;
+	struct glamodrm_handle *gdrm = connector->dev->dev_private;
 	int i;
 
 	/* Dig out the record which will tell us about the hardware */
@@ -176,6 +183,7 @@ static void glamo_connector_destroy(struct drm_connector *connector)
 {
 	drm_sysfs_connector_remove(connector);
 	drm_connector_cleanup(connector);
+	kfree(connector);
 }
 
 /* Connector functions */
@@ -195,10 +203,14 @@ static const struct drm_connector_helper_funcs glamo_connector_helper_funcs = {
 	.best_encoder = glamo_connector_best_encoder,
 };
 
-int glamo_connector_init(struct drm_device *dev,
-                         struct drm_connector * connector)
+struct drm_connector * glamo_connector_init(struct drm_device *dev)
 {
+	struct drm_connector *connector;
 	DRM_DEBUG("\n");
+	
+	connector = kzalloc(sizeof(struct drm_connector), GFP_KERNEL);
+	if (!connector)
+		return ERR_PTR(-ENOMEM);
 	
 	drm_connector_init(dev, connector, &glamo_connector_funcs,
 	                   DRM_MODE_CONNECTOR_LVDS);
@@ -210,5 +222,6 @@ int glamo_connector_init(struct drm_device *dev,
 	
 	drm_sysfs_connector_add(connector);
 	
-	return 0;
+	return connector;
 }
+

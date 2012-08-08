@@ -102,6 +102,7 @@ static void glamo_encoder_mode_set(struct drm_encoder *encoder,
 static void glamo_encoder_destroy(struct drm_encoder *encoder)
 {
 	drm_encoder_cleanup(encoder);
+	kfree(encoder);
 }
 
 
@@ -120,15 +121,22 @@ static const struct drm_encoder_helper_funcs glamo_encoder_helper_funcs = {
 	.mode_set = glamo_encoder_mode_set,
 };
 
-int glamo_encoder_init(struct drm_device *dev, struct drm_encoder *enc)
+struct drm_encoder * glamo_encoder_init(struct drm_device *dev)
 {
+	struct drm_encoder *encoder;
 	DRM_DEBUG("\n");
-	drm_encoder_init(dev, enc, &glamo_encoder_funcs,
+	
+	encoder = kzalloc(sizeof(struct drm_encoder), GFP_KERNEL);
+	if (!encoder)
+		return ERR_PTR(-ENOMEM);
+	
+	drm_encoder_init(dev, encoder, &glamo_encoder_funcs,
 	                 DRM_MODE_ENCODER_DAC);
 	
-	enc->possible_crtcs = 1 << 0;
+	encoder->possible_crtcs = 1 << 0;
     
-    drm_encoder_helper_add(enc, &glamo_encoder_helper_funcs);
+    drm_encoder_helper_add(encoder, &glamo_encoder_helper_funcs);
     
-    return 0;
+    return encoder;
 }
+

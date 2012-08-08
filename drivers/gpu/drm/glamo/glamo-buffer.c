@@ -348,7 +348,7 @@ int glamo_buffer_init(struct drm_device *dev)
 {
 	struct glamodrm_handle *gdrm = dev->dev_private;
 	gdrm->mmgr = dev->mm_private;
-	//drm_mm_init(gdrm->mmgr, 0, gdrm->vram_size);
+	//drm_mm_init(gdrm->mmgr, 0, GLAMO_FB_SIZE);
 
 	/* Reserve a scratch buffer.  We do this outside the protections
 	 * of the other GEM code.  To do this safely, the allocation must
