@@ -60,10 +60,8 @@
 #include <linux/jbt6k74.h>
 
 #include <linux/mfd/glamo-core.h>
-#include "glamo-drm-private.h"
-#include "glamo-regs.h"
+#include "glamo-driver.h"
 #include "glamo-kms-fb.h"
-#include "glamo-display.h"
 
 
 static void glamo_connector_dpms(struct drm_connector *connector, int mode)

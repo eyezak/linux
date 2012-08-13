@@ -30,6 +30,6 @@
 #include <drm/drmP.h>
 #include "glamo-drm-private.h"
 
-extern int glamo_fbdev_init(struct drm_device *dev);
+
 
 #endif /* __GLAMO_KMS_FB_H */

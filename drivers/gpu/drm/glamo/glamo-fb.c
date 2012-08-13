@@ -30,10 +30,8 @@
 #include <drm/drm_fb_helper.h>
 #include <drm/glamo_drm.h>
 
-#include "glamo-drm-private.h"
-#include "glamo-display.h"
+#include "glamo-driver.h"
 #include "glamo-buffer.h"
-#include "glamo-regs.h"
 
  
 static int glamo_fb_setcolreg(unsigned regno, unsigned red, unsigned green,

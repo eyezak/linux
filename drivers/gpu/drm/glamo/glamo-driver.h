@@ -24,18 +24,35 @@
 #define __GLAMO_DISPLAY_H
 
 #include <drm/drmP.h>
+#include "glamo-regs.h"
 #include "glamo-drm-private.h"
 
-extern int glamo_display_init(struct drm_device *dev);
+/*  LCD interface  */
+extern void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode);
+extern void glamo_lcd_init(struct glamodrm_handle *gdrm);
+extern int reg_read_lcd(struct glamodrm_handle *gdrm, u_int16_t reg);
 
-extern struct drm_framebuffer * glamo_framebuffer_create(
-			     struct drm_device *dev,
+/*  Init system  */
+struct drm_framebuffer * glamo_framebuffer_create(struct drm_device *dev,
 			     struct drm_mode_fb_cmd2 *mode_cmd,
 			     struct drm_gem_object *obj);
 
-extern void glamo_display_suspend(struct glamodrm_handle *gdrm);
-extern void glamo_display_resume(struct glamodrm_handle *gdrm);
+extern int glamo_fbdev_init(struct drm_device *dev);
+extern void glamo_fbdev_free(struct drm_device *dev);
 
-extern void glamo_lcd_power(struct glamodrm_handle *gdrm, int mode);
+extern struct fb_info * glamo_fb_init(struct drm_fb_helper *fb_helper,
+                 struct drm_fb_helper_surface_size *sizes,
+                 unsigned int start,
+                 unsigned int size);
+
+extern int glamo_modeset_init(struct drm_device *dev);
+
+extern void glamo_mode_config_init(struct drm_device *dev);
+
+extern struct drm_crtc * glamo_crtc_init(struct drm_device *dev);
+
+extern struct drm_encoder * glamo_encoder_init(struct drm_device *dev);
+
+extern struct drm_connector * glamo_connector_init(struct drm_device *dev);
 
 #endif /* __GLAMO_DISPLAY_H */

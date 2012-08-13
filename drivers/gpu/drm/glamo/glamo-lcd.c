@@ -60,10 +60,8 @@
 #include <linux/jbt6k74.h>
 
 #include <linux/mfd/glamo-core.h>
-#include "glamo-drm-private.h"
-#include "glamo-regs.h"
+#include "glamo-driver.h"
 #include "glamo-kms-fb.h"
-#include "glamo-display.h"
 
 
 int reg_read_lcd(struct glamodrm_handle *gdrm, u_int16_t reg)

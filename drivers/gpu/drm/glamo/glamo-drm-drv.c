@@ -32,10 +32,9 @@
 #include <linux/glamofb.h>
 #include <linux/mfd/glamo-core.h>
 
+#include "glamo-driver.h"
 #include "glamo-cmdq.h"
 #include "glamo-buffer.h"
-#include "glamo-drm-private.h"
-#include "glamo-display.h"
 #include "glamo-kms-fb.h"
 #include "glamo-fence.h"
 
@@ -43,14 +42,6 @@
 #define DRIVER_NAME             "glamo-drm"
 #define DRIVER_DESC             "SMedia Glamo 3362"
 #define DRIVER_DATE             "20090614"
-
-extern void glamo_lcd_init(struct glamodrm_handle *gdrm);
-extern int glamo_modeset_init(struct drm_device *dev);
-extern void glamo_mode_config_init(struct drm_device *dev);
-extern struct drm_crtc * glamo_crtc_init(struct drm_device *dev);
-extern struct drm_encoder * glamo_encoder_init(struct drm_device *dev);
-extern struct drm_connector * glamo_connector_init(struct drm_device *dev);
-extern void glamo_fbdev_free(struct drm_device *dev);
 
 
 static int glamo_ioctl_swap(struct drm_device *dev, void *data,
@@ -440,9 +431,9 @@ static int glamodrm_remove(struct platform_device *pdev)
 
 static int glamodrm_suspend(struct platform_device *pdev, pm_message_t state)
 {
-	struct glamodrm_handle *gdrm = platform_get_drvdata(pdev);
+	/*struct glamodrm_handle *gdrm = platform_get_drvdata(pdev);
 
-	/*console_lock();
+	console_lock();
 	fb_set_suspend(gdrm->fb_helper->fbdev, 1);
 	console_unlock();*/
 
@@ -453,9 +444,9 @@ static int glamodrm_suspend(struct platform_device *pdev, pm_message_t state)
 
 static int glamodrm_resume(struct platform_device *pdev)
 {
-	struct glamodrm_handle *gdrm = platform_get_drvdata(pdev);
+	/*struct glamodrm_handle *gdrm = platform_get_drvdata(pdev);
 
-	/*console_lock();
+	console_lock();
 	fb_set_suspend(gdrm->fb_helper->fbdev, 0);
 	console_unlock();*/
 

@@ -32,13 +32,10 @@
 
 #include <linux/mfd/glamo-core.h>
 #include <linux/glamofb.h>
-#include "glamo-drm-private.h"
-#include "glamo-display.h"
+#include "glamo-driver.h"
 #include "glamo-buffer.h"
 #include "glamo-regs.h"
 
-extern int reg_read_lcd(struct glamodrm_handle *gdrm, u_int16_t reg);
-extern struct fb_info * glamo_fb_init(struct drm_fb_helper *fb_helper, struct drm_fb_helper_surface_size *sizes, unsigned int start, unsigned int size);
 
 #define RESSIZE(ressource) (((ressource)->end - (ressource)->start)+1)
 

@@ -60,10 +60,8 @@
 #include <linux/jbt6k74.h>
 
 #include <linux/mfd/glamo-core.h>
-#include "glamo-drm-private.h"
-#include "glamo-regs.h"
+#include "glamo-driver.h"
 #include "glamo-kms-fb.h"
-#include "glamo-display.h"
 
 #define GLAMO_LCD_WIDTH_MASK 0x03FF
 #define GLAMO_LCD_HEIGHT_MASK 0x03FF
