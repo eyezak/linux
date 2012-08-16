@@ -14,11 +14,6 @@
 #ifndef __LINUX_MFD_PCF50633_CORE_H
 #define __LINUX_MFD_PCF50633_CORE_H
 
-#if defined(DEBUG)
-#undef DEBUG
-#endif
-#define DEBUG
-
 #include <linux/i2c.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
