@@ -34,7 +34,6 @@
 
 #include <linux/mfd/glamo-core.h>
 #include "glamo-driver.h"
-#include "glamo-kms-fb.h"
 
 
 static struct drm_framebuffer *

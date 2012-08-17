@@ -61,8 +61,6 @@
 
 #include <linux/mfd/glamo-core.h>
 #include "glamo-driver.h"
-#include "glamo-kms-fb.h"
-
 
 static void glamo_connector_dpms(struct drm_connector *connector, int mode)
 {

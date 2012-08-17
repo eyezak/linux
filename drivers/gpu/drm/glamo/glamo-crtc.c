@@ -61,7 +61,6 @@
 
 #include <linux/mfd/glamo-core.h>
 #include "glamo-driver.h"
-#include "glamo-kms-fb.h"
 
 #define GLAMO_LCD_WIDTH_MASK 0x03FF
 #define GLAMO_LCD_HEIGHT_MASK 0x03FF

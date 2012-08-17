@@ -35,7 +35,6 @@
 #include "glamo-driver.h"
 #include "glamo-cmdq.h"
 #include "glamo-buffer.h"
-#include "glamo-kms-fb.h"
 #include "glamo-fence.h"
 
 #define DRIVER_AUTHOR           "Openmoko, Inc."

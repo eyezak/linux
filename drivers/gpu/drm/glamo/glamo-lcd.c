@@ -61,7 +61,6 @@
 
 #include <linux/mfd/glamo-core.h>
 #include "glamo-driver.h"
-#include "glamo-kms-fb.h"
 
 
 int reg_read_lcd(struct glamodrm_handle *gdrm, u_int16_t reg)

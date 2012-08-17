@@ -61,7 +61,6 @@
 
 #include <linux/mfd/glamo-core.h>
 #include "glamo-driver.h"
-#include "glamo-kms-fb.h"
 
 static void glamo_encoder_dpms(struct drm_encoder *encoder, int mode)
 {
