@@ -409,7 +409,7 @@ static struct lis3lv02d_platform_data gta02_gsensor0_pdata = {
 	.click_thresh_x = 40,
 	.click_thresh_y = 40,
 	.click_thresh_z = 40,
-//	.id				= 0,
+	.id				= 0,
 };
 
 static struct lis3lv02d_platform_data gta02_gsensor1_pdata = {
@@ -422,7 +422,7 @@ static struct lis3lv02d_platform_data gta02_gsensor1_pdata = {
 	.click_thresh_x = 40,
 	.click_thresh_y = 40,
 	.click_thresh_z = 40,
-//	.id				= 1,
+	.id				= 1,
 };
 
 
